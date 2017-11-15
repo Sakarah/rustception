@@ -20,12 +20,14 @@ impl Location
         }
 	}
 
+    // Reduce location to it's last character
     pub fn reduce(&mut self)
     {
         self.start_line = self.end_line;
         self.start_column = self.end_column;
     }
 
+    // Extend the location by one character
     pub fn extend(&mut self, c: Option<char>)
     {
         match c {

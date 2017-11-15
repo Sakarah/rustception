@@ -1,27 +1,34 @@
-use std::io;
-use std::io::Write;
+mod location;
 
-mod lexer;
+use std::io::*;
+use location::Location;
+use std::str::Chars;
+use std::iter::Peekable;
 
-fn main() {
+struct InputBuf<'a, R>
+{
+    location: Location,
+    current_line: Peekable<Chars<'a>>,
+    file: Lines<BufReader<R>>,
+}
 
-    loop
+impl<'a, R: Read> InputBuf<'a, R>
+{
+    fn new<'b>(input: R) -> InputBuf<'b, R>
     {
-        print!(">>> ");
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-
-        io::stdin().read_line(&mut input)
-               .expect("Failed to read line.");
-
-        let mut scanner = lexer::Lexer::new(input.chars());
-
-        loop {
-        	match scanner.next() {
-        		Some(token) => print!("{} ", token),
-        		None => break
-        	};
+        let mut file = BufReader::new(input).lines();
+        let line_string = file.next()
+            .expect("File is empty!")
+            .unwrap()
+            .clone();
+        let current_line = line_string.chars();
+        InputBuf
+        {
+            location: Location::new(0,0),
+            file: file,
+            current_line: current_line.peekable()
         }
-        println!("");
     }
 }
+
+fn main() {}

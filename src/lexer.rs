@@ -1,10 +1,39 @@
 use std;
+use std::io::*;
+use std::str::Chars;
 use std::iter::Peekable;
 use std::fmt;
 use std::cmp;
 use lexer;
 use lexer::Token::*;
 use lexer::LexerState::*;
+
+use location::Location;
+
+struct InputBuf<'a, R>
+{
+    location: Location,
+    current_line: Peekable<Chars<'a>>,
+    file: Lines<BufReader<R>>,
+}
+
+impl<'a, R: Read> InputBuf<'a, R>
+{
+    fn new<'b>(input: R) -> InputBuf<'b, R>
+    {
+        let mut file = BufReader::new(input).lines();
+        let line_string = file.next()
+            .expect("File is empty!")
+            .unwrap();
+        let current_line = line_string.chars();
+        InputBuf
+        {
+            location: Location::new(0,0),
+            file: file,
+            current_line: current_line.peekable()
+        }
+    }
+}
 
 pub enum Token
 {
@@ -44,14 +73,6 @@ enum LexerState
     InitialState,
 }
 
-pub struct Lexer<'a>
-{
-    state: LexerState,
-    value: String,
-    input: Peekable<std::str::Chars<'a>>,
-    reinjection: Option<char>
-}
-
 impl LexerState
 {
     fn clone(&self) -> LexerState {
@@ -64,6 +85,16 @@ impl LexerState
     }
 }
 
+pub struct Lexer<'a>
+{
+    state: LexerState,
+    value: String,
+    input: Peekable<Chars<'a>>,
+    reinjection: Option<char>,
+    location: Location
+}
+
+
 impl<'a> Lexer<'a>
 {
     /**
@@ -75,7 +106,8 @@ impl<'a> Lexer<'a>
             value: String::new(),
             input: input.peekable(),
             state: lexer::LexerState::InitialState,
-            reinjection: None
+            reinjection: None,
+            location: Location::new(0,0)
         }
     }
 
