@@ -1,0 +1,6 @@
+[package]
+name = "rustception"
+version = "0.0.1"
+authors = ["skodt", "sakarah"]
+
+[dependencies]
