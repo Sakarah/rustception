@@ -168,7 +168,16 @@ impl<'a> Lexer<'a>
                 token = Some(StringLitteral(self.value.clone()));
                 self.value.clear();
                 self.state = InitialState;
-            }
+            },
+            (ReadQuotedString, '\\') => match self.input.next() {
+                Some('n') => self.value.push('\n'),
+                Some('t') => self.value.push('\t'),
+                Some('\\') => self.value.push('\\'),
+                Some('"') => self.value.push('\"'),
+                Some('0') => self.value.push('\0'),
+                Some(c) => panic!("Unknown escaped character: {}", c),
+                None => panic!("Unfinished string litteral")
+            },
             (ReadQuotedString, _) => self.value.push(c),
 
             // Case InitialState
