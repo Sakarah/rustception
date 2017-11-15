@@ -12,22 +12,22 @@ pub enum Token
     Identifier(String),
 
     // "string"
-    StringLitteral(String), 
+    StringLitteral(String),
 
     // Keywords
     Else, False, Fn, If, Let, Mut, Return, Struct, True, While,
 
     // =, ., *, :, ;, ,, '
     Eq, Dot, Star, Colon, SemiColon, Comma, Apostrophe,
- 
+
     // +, -, /, %, &&, ||
-    Plus, Sub, Div, Mod, And, Or, 
-    
+    Plus, Minus, Div, Mod, And, Or,
+
     // ==, !=, >=, <=
     DoubleEq, NotEq, Geq, Leq,
 
     // !, &
-    Not, Ref,
+    Bang, Ampersand,
 
     // Brackets
     LeftParen, RightParen,      // ()
@@ -93,11 +93,11 @@ impl<'a> Lexer<'a>
 
     fn nested_commentary(&mut self)
     {
-        loop 
+        loop
         {
             match self.input.next()
             {
-                Some('/') => match self.input.peek() 
+                Some('/') => match self.input.peek()
                 {
                     Some(&'*') => {self.input.next(); self.nested_commentary()},
                     Some(_) => (),
@@ -126,6 +126,7 @@ impl<'a> Lexer<'a>
         {
             // Case ReadInt
             (ReadInt, '0' ... '9') => self.value.push(c),
+            (ReadInt, '_') => (),
             (ReadInt, _) => {
                 match self.value.parse::<i32>() {
                     Ok(n) => {
@@ -146,15 +147,15 @@ impl<'a> Lexer<'a>
             (ReadIdentifier, _) => {
                 match self.value.as_str()
                 {
-                    "else" => token = Some(Else), 
-                    "false" => token = Some(False), 
-                    "fn" => token = Some(Fn), 
-                    "if" => token = Some(If), 
-                    "let" => token = Some(Let), 
-                    "mut" => token = Some(Mut), 
-                    "return" => token = Some(Return), 
-                    "struct" => token = Some(Struct), 
-                    "true" => token = Some(True), 
+                    "else" => token = Some(Else),
+                    "false" => token = Some(False),
+                    "fn" => token = Some(Fn),
+                    "if" => token = Some(If),
+                    "let" => token = Some(Let),
+                    "mut" => token = Some(Mut),
+                    "return" => token = Some(Return),
+                    "struct" => token = Some(Struct),
+                    "true" => token = Some(True),
                     "while" => token = Some(While),
                     _ => token = Some(Identifier(self.value.clone()))
                 };
@@ -179,16 +180,16 @@ impl<'a> Lexer<'a>
                 self.value.push(c);
                 self.state = ReadIdentifier
             },
-            (InitialState, '"') => self.state = ReadQuotedString, 
+            (InitialState, '"') => self.state = ReadQuotedString,
 
-            // Double characters token 
+            // Double characters token
             (InitialState, '&') => match self.input.peek() {
                 Some(&'&') => { self.input.next(); token = Some(And) },
-                _ => token = Some(Ref) 
+                _ => token = Some(Ampersand)
             },
             (InitialState, '!') => match self.input.peek() {
                 Some(&'=') => { self.input.next(); token = Some(NotEq) },
-                _ => token = Some(Not)
+                _ => token = Some(Bang)
             },
             (InitialState, '/') => match self.input.peek() {
                 Some(&'/') => self.single_commentary(),
@@ -226,9 +227,8 @@ impl<'a> Lexer<'a>
             (InitialState, ':') => token = Some(Colon),
             (InitialState, '*') => token = Some(Star),
             (InitialState, '+') => token = Some(Plus),
-            (InitialState, '-') => token = Some(Sub),
+            (InitialState, '-') => token = Some(Minus),
             (InitialState, '%') => token = Some(Mod),
-            (InitialState, ',') => token = Some(Comma),
             (InitialState, ' ') | (InitialState, '\n') => (),
             (InitialState, _) => panic!("Unexpected character {}", c)
         };
@@ -247,13 +247,13 @@ impl<'a> Iterator for Lexer<'a>
             match self.reinjection {
                 Some (c) => {
                     match self.consume(c) {
-                        Some(token) => { 
+                        Some(token) => {
                             self.reinjection = None;
                             return Some(token)
                         },
                         None => self.reinjection = None
                     };
-                      
+
                 },
                 None => match self.input.next() {
                     Some (c) =>
@@ -280,20 +280,20 @@ impl cmp::PartialEq for Token
             (&StringLitteral(_), &StringLitteral(_)) |
 
             (&Else, &Else) | (&False, &False) | (&Fn, &Fn) | (&If, &If) |
-            (&Let, &Let) | (&Mut, &Mut) | (&Return, &Return) | 
+            (&Let, &Let) | (&Mut, &Mut) | (&Return, &Return) |
             (&Struct, &Struct) | (&True, &True) | (&While, &While) |
 
             (&Eq, &Eq) | (&Dot, &Dot) | (&Star, &Star) | (&Colon, &Colon) |
             (&SemiColon, &SemiColon) | (&Comma, &Comma) |
             (&Apostrophe, &Apostrophe) |
 
-            (&Plus, &Plus) | (&Sub, &Sub) | (&Div, &Div) | (&Mod, &Mod) |
+            (&Plus, &Plus) | (&Minus, &Minus) | (&Div, &Div) | (&Mod, &Mod) |
             (&And, &And) | (&Or, &Or) |
 
-            (&DoubleEq, &DoubleEq) | (&NotEq, &NotEq) | 
+            (&DoubleEq, &DoubleEq) | (&NotEq, &NotEq) |
             (&Geq, &Geq) | (&Leq, &Leq) |
 
-            (&Not, &Not) | (&Ref, &Ref) | 
+            (&Bang, &Bang) | (&Ampersand, &Ampersand) |
             (&LeftParen, &LeftParen) | (&RightParen, &RightParen) |
             (&LeftBrace, &LeftBrace) | (&RightBrace, &RightBrace) |
             (&LeftChevron, &LeftChevron) | (&RightChevron, &RightChevron) |
@@ -318,14 +318,13 @@ impl fmt::Display for Token
             &False => write!(f, "FALSE"),
             &Fn => write!(f, "FN"),
             &If => write!(f, "IF"),
-            &Else => write!(f, "ELSE"),
             &Let => write!(f,"LET"),
             &Mut => write!(f, "MUT"),
             &Return => write!(f, "RETURN"),
             &Struct => write!(f, "STRUCT"),
             &True => write!(f, "TRUE"),
             &While => write!(f, "WHILE"),
-            
+
             &Eq => write!(f,"="),
             &Dot => write!(f, "."),
             &Star => write!(f, "*"),
@@ -335,7 +334,7 @@ impl fmt::Display for Token
             &Apostrophe => write!(f, "'"),
 
             &Plus => write!(f, "PLUS"),
-            &Sub => write!(f, "MINUS"),
+            &Minus => write!(f, "MINUS"),
             &Div => write!(f, "DIV"),
             &Mod => write!(f, "MOD"),
 
@@ -347,8 +346,8 @@ impl fmt::Display for Token
             &Geq => write!(f, "GEQ"),
             &Leq => write!(f, "LEQ"),
 
-            &Not => write!(f, "NOT"),
-            &Ref => write!(f, "REF"),
+            &Bang => write!(f, "BANG"),
+            &Ampersand => write!(f, "AMPERSAND"),
 
             &LeftParen => write!(f, "("),
             &RightParen => write!(f, ")"),
