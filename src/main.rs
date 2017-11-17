@@ -1,34 +1,18 @@
+mod lexer;
 mod location;
 
-use std::io::*;
-use location::Location;
-use std::str::Chars;
-use std::iter::Peekable;
+use std::fs::File;
+use lexer::Lexer;
 
-struct InputBuf<'a, R>
+fn main()
 {
-    location: Location,
-    current_line: Peekable<Chars<'a>>,
-    file: Lines<BufReader<R>>,
+	let file = File::open("foo")
+		.expect("Unable to open file foo");
+	let mut printer = Lexer::from_channel(file);
+	loop {
+		match printer.next() {
+			Some(token) => println!("{}", token),
+			None => break
+		}
+	}
 }
-
-impl<'a, R: Read> InputBuf<'a, R>
-{
-    fn new<'b>(input: R) -> InputBuf<'b, R>
-    {
-        let mut file = BufReader::new(input).lines();
-        let line_string = file.next()
-            .expect("File is empty!")
-            .unwrap()
-            .clone();
-        let current_line = line_string.chars();
-        InputBuf
-        {
-            location: Location::new(0,0),
-            file: file,
-            current_line: current_line.peekable()
-        }
-    }
-}
-
-fn main() {}

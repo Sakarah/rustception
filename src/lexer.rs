@@ -1,39 +1,13 @@
-use std;
 use std::io::*;
-use std::str::Chars;
 use std::iter::Peekable;
 use std::fmt;
 use std::cmp;
+use std::process::exit;
 use lexer;
 use lexer::Token::*;
 use lexer::LexerState::*;
 
 use location::Location;
-
-struct InputBuf<'a, R>
-{
-    location: Location,
-    current_line: Peekable<Chars<'a>>,
-    file: Lines<BufReader<R>>,
-}
-
-impl<'a, R: Read> InputBuf<'a, R>
-{
-    fn new<'b>(input: R) -> InputBuf<'b, R>
-    {
-        let mut file = BufReader::new(input).lines();
-        let line_string = file.next()
-            .expect("File is empty!")
-            .unwrap();
-        let current_line = line_string.chars();
-        InputBuf
-        {
-            location: Location::new(0,0),
-            file: file,
-            current_line: current_line.peekable()
-        }
-    }
-}
 
 pub enum Token
 {
@@ -85,26 +59,25 @@ impl LexerState
     }
 }
 
-pub struct Lexer<'a>
+pub struct Lexer<R: Read>
 {
     state: LexerState,
     value: String,
-    input: Peekable<Chars<'a>>,
+    input: Peekable<Bytes<R>>,
     reinjection: Option<char>,
     location: Location
 }
 
-
-impl<'a> Lexer<'a>
+impl<R: Read> Lexer<R>
 {
     /**
      * Create a new lexer parsing tokens from the given input.
      */
-    pub fn new<'b>(input: std::str::Chars<'b>) -> Lexer<'b>
+    pub fn from_channel(channel: R) -> Lexer<R>
     {
         Lexer {
             value: String::new(),
-            input: input.peekable(),
+            input: channel.bytes().peekable(),
             state: lexer::LexerState::InitialState,
             reinjection: None,
             location: Location::new(0,0)
@@ -115,7 +88,7 @@ impl<'a> Lexer<'a>
     {
         loop
         {
-            match self.input.next()
+            match next_char(&mut self.input)
             {
                 Some('\n') | None => break,
                 _ => ()
@@ -127,17 +100,17 @@ impl<'a> Lexer<'a>
     {
         loop
         {
-            match self.input.next()
+            match next_char(&mut self.input)
             {
-                Some('/') => match self.input.peek()
+                Some('/') => match peek_char(&mut self.input)
                 {
-                    Some(&'*') => {self.input.next(); self.nested_commentary()},
+                    Some('*') => {self.input.next(); self.nested_commentary()},
                     Some(_) => (),
                     None => panic!("Some commentary does not end")
                 },
-                Some('*') => match self.input.peek()
+                Some('*') => match peek_char(&mut self.input)
                 {
-                    Some(&'/') => { self.input.next(); break }
+                    Some('/') => { self.input.next(); break }
                     Some(_) => (),
                     None => panic!("Some commentary does not end")
                 },
@@ -201,7 +174,7 @@ impl<'a> Lexer<'a>
                 self.value.clear();
                 self.state = InitialState;
             },
-            (ReadQuotedString, '\\') => match self.input.next() {
+            (ReadQuotedString, '\\') => match next_char(&mut self.input) {
                 Some('n') => self.value.push('\n'),
                 Some('t') => self.value.push('\t'),
                 Some('\\') => self.value.push('\\'),
@@ -224,33 +197,33 @@ impl<'a> Lexer<'a>
             (InitialState, '"') => self.state = ReadQuotedString,
 
             // Double characters token
-            (InitialState, '&') => match self.input.peek() {
-                Some(&'&') => { self.input.next(); token = Some(And) },
+            (InitialState, '&') => match peek_char(&mut self.input) {
+                Some('&') => { self.input.next(); token = Some(And) },
                 _ => token = Some(Ampersand)
             },
-            (InitialState, '!') => match self.input.peek() {
-                Some(&'=') => { self.input.next(); token = Some(NotEq) },
+            (InitialState, '!') => match peek_char(&mut self.input) {
+                Some('=') => { self.input.next(); token = Some(NotEq) },
                 _ => token = Some(Bang)
             },
-            (InitialState, '/') => match self.input.peek() {
-                Some(&'/') => self.single_commentary(),
-                Some(&'*') => self.nested_commentary(),
+            (InitialState, '/') => match peek_char(&mut self.input) {
+                Some('/') => self.single_commentary(),
+                Some('*') => self.nested_commentary(),
                 _ => token = Some(Div)
             },
-            (InitialState, '<') => match self.input.peek() {
-                Some(&'=') => { self.input.next(); token = Some(Leq) },
+            (InitialState, '<') => match peek_char(&mut self.input) {
+                Some('=') => { self.input.next(); token = Some(Leq) },
                 _ => token = Some(LeftChevron)
             },
-            (InitialState, '>') => match self.input.peek() {
-                Some(&'=') => { self.input.next(); token = Some(Geq) },
+            (InitialState, '>') => match peek_char(&mut self.input) {
+                Some('=') => { self.input.next(); token = Some(Geq) },
                 _ => token = Some(RightChevron)
             },
-            (InitialState, '|') => match self.input.peek() {
-                Some(&'|') => { self.input.next(); token = Some(Or) },
+            (InitialState, '|') => match peek_char(&mut self.input) {
+                Some('|') => { self.input.next(); token = Some(Or) },
                 _ => panic!("Expected character |")
             },
-            (InitialState, '=') => match self.input.peek() {
-                Some(&'=') => { self.input.next(); token = Some(DoubleEq) },
+            (InitialState, '=') => match peek_char(&mut self.input) {
+                Some('=') => { self.input.next(); token = Some(DoubleEq) },
                 _ => token = Some(Eq)
             },
 
@@ -270,14 +243,31 @@ impl<'a> Lexer<'a>
             (InitialState, '+') => token = Some(Plus),
             (InitialState, '-') => token = Some(Minus),
             (InitialState, '%') => token = Some(Mod),
-            (InitialState, ' ') | (InitialState, '\n') => (),
+            (InitialState, ' ') | (InitialState, '\n') |
+            (InitialState, '\t') => (),
             (InitialState, _) => panic!("Unexpected character {}", c)
         };
         token
     }
 }
 
-impl<'a> Iterator for Lexer<'a>
+fn next_char<R: Read>(iter: &mut Peekable<Bytes<R>>) -> Option<char> {
+    iter.next()
+        .map( |x| match x {
+            Ok(c) => c as char,
+            Err(err) => { print!("{:?}", err); exit(42) }
+        } )
+}
+
+fn peek_char<R: Read>(iter: &mut Peekable<Bytes<R>>) -> Option<char> {
+    iter.peek()
+        .map( |x| match x {
+            &Ok(c) => c as char,
+            &Err(ref err) => { print!("{:?}", err); exit(42) }
+        } )
+}
+
+impl<R: Read> Iterator for Lexer<R>
 {
     type Item = Token;
 
@@ -296,7 +286,7 @@ impl<'a> Iterator for Lexer<'a>
                     };
 
                 },
-                None => match self.input.next() {
+                None => match next_char(&mut self.input) {
                     Some (c) =>
                     match self.consume(c) {
                         Some(token) => return Some(token),
