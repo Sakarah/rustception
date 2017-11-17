@@ -3,6 +3,7 @@ use std::iter::Peekable;
 use std::fmt;
 use std::cmp;
 use std::process::exit;
+use std::io::{Error, ErrorKind};
 use lexer;
 use lexer::Token::*;
 use lexer::LexerState::*;
@@ -37,8 +38,11 @@ pub enum Token
     LeftBrace, RightBrace,      // {}
     LeftBracket, RightBracket,  // []
     LeftChevron, RightChevron,  // <>
+
+    Eof,
 }
 
+#[derive(PartialEq)]
 enum LexerState
 {
     ReadInt,
@@ -65,7 +69,10 @@ pub struct Lexer<R: Read>
     value: String,
     input: Peekable<Bytes<R>>,
     reinjection: Option<char>,
-    location: Location
+    start_loc: Location,
+    end_loc: Location,
+    what: String,                // error handling
+    stop: bool
 }
 
 impl<R: Read> Lexer<R>
@@ -80,8 +87,19 @@ impl<R: Read> Lexer<R>
             input: channel.bytes().peekable(),
             state: lexer::LexerState::InitialState,
             reinjection: None,
-            location: Location::new(0,0)
+            start_loc: Location::new(0,0,0),
+            end_loc: Location::new(0,0,0),
+            what: String::new(),
+            stop: false
         }
+    }
+
+    // Reduce the location to it's last character.
+    fn reduce(&mut self)
+    {
+        self.start_loc.line = self.end_loc.line;
+        self.start_loc.column = self.end_loc.column;
+        self.start_loc.offset = self.end_loc.offset;
     }
 
     fn single_commentary(&mut self)
@@ -106,16 +124,16 @@ impl<R: Read> Lexer<R>
                 {
                     Some('*') => {self.input.next(); self.nested_commentary()},
                     Some(_) => (),
-                    None => panic!("Some commentary does not end")
+                    None => self.what = format!("Some commentary does not end")
                 },
                 Some('*') => match peek_char(&mut self.input)
                 {
                     Some('/') => { self.input.next(); break }
                     Some(_) => (),
-                    None => panic!("Some commentary does not end")
+                    None => self.what = format!("Some commentary does not end")
                 },
                 Some(_) => (),
-                None => panic!("Some commentary does not end")
+                None => self.what = format!("Some commentary does not end")
             };
         }
     }
@@ -138,7 +156,13 @@ impl<R: Read> Lexer<R>
                         self.value.clear();
                         token = Some(Integer(n))
                     },
-                    Err(msg) => panic!("failed integer parsing: {}", msg)
+                    Err(msg) => {
+                        self.what = format!("Failed integer parsing:{}:{}:{}",
+                                        self.start_loc.line,
+                                        self.start_loc.column,
+                                        msg);
+                        self.stop = true
+                    }
                 };
                 self.state = InitialState;
                 self.reinjection = Some(c)
@@ -180,8 +204,18 @@ impl<R: Read> Lexer<R>
                 Some('\\') => self.value.push('\\'),
                 Some('"') => self.value.push('\"'),
                 Some('0') => self.value.push('\0'),
-                Some(c) => panic!("Unknown escaped character: {}", c),
-                None => panic!("Unfinished string litteral")
+                Some(c) => {
+                    self.what = format!("error: unknown escaped character: {} :{}:{}",
+                                    c,
+                                    self.end_loc.line,
+                                    self.end_loc.column);
+                    self.stop = true
+                },
+                None => {
+                    self.what = format!("error: unfinished string litteral line {}",
+                                    self.end_loc.line);
+                    self.stop = true
+                }
             },
             (ReadQuotedString, _) => self.value.push(c),
 
@@ -220,7 +254,12 @@ impl<R: Read> Lexer<R>
             },
             (InitialState, '|') => match peek_char(&mut self.input) {
                 Some('|') => { self.input.next(); token = Some(Or) },
-                _ => panic!("Expected character |")
+                _ => {
+                    self.what = format!("error: expected character '|' :{}:{}",
+                                    self.end_loc.line,
+                                    self.end_loc.column);
+                    self.stop = true
+                }
             },
             (InitialState, '=') => match peek_char(&mut self.input) {
                 Some('=') => { self.input.next(); token = Some(DoubleEq) },
@@ -244,8 +283,15 @@ impl<R: Read> Lexer<R>
             (InitialState, '-') => token = Some(Minus),
             (InitialState, '%') => token = Some(Mod),
             (InitialState, ' ') | (InitialState, '\n') |
-            (InitialState, '\t') => (),
-            (InitialState, _) => panic!("Unexpected character {}", c)
+            (InitialState, '\t') => self.reduce(),
+            (InitialState, _) => {
+                self.what = format!("error: unrecognized character {} :{}:{}",
+                                    c,
+                                    self.end_loc.line,
+                                    self.end_loc.column);
+                self.stop = true
+            }
+
         };
         token
     }
@@ -269,34 +315,51 @@ fn peek_char<R: Read>(iter: &mut Peekable<Bytes<R>>) -> Option<char> {
 
 impl<R: Read> Iterator for Lexer<R>
 {
-    type Item = Token;
+    type Item = Result<(Location, Token, Location)>;
 
-    fn next(&mut self) -> Option<Token>
+    fn next(&mut self) -> Option<Result<(Location, Token, Location)>>
     {
+        // Reduce the location
+        self.reduce();
         loop
         {
+            if self.stop {
+                let err = Error::new(ErrorKind::Other, self.what.clone());
+                return Some(Err(err))
+            };
             match self.reinjection {
                 Some (c) => {
                     match self.consume(c) {
                         Some(token) => {
                             self.reinjection = None;
-                            return Some(token)
+                            return Some(Ok((self.start_loc.clone(),
+                                            token,
+                                            self.end_loc.clone())))
                         },
                         None => self.reinjection = None
                     };
 
                 },
+                // No reinjection character
                 None => match next_char(&mut self.input) {
                     Some (c) =>
                     match self.consume(c) {
-                        Some(token) => return Some(token),
-                        None => ()
+                        Some(token) =>
+                            return Some(Ok((self.start_loc.clone(),
+                                            token,
+                                            self.end_loc.clone()))),
+                        None => self.end_loc.extend(c)
                     },
                     None => break
                 }
             }
         }
-        None
+        if self.state.clone() == InitialState {
+            Some(Ok((self.end_loc.clone(), Eof, self.end_loc.clone())))
+        }
+        else {
+            None
+        }
     }
 }
 
@@ -388,6 +451,8 @@ impl fmt::Display for Token
             &RightBracket => write!(f, "]"),
             &LeftChevron => write!(f, "<"),
             &RightChevron => write!(f, ">"),
+
+            &Eof => write!(f, "EOF"),
         }
     }
 }
