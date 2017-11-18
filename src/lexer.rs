@@ -1,7 +1,6 @@
 use std::io::*;
 use std::iter::Peekable;
 use std::fmt;
-use std::cmp;
 use std::process::exit;
 use std::io::{Error, ErrorKind};
 use lexer;
@@ -38,8 +37,6 @@ pub enum Token
     LeftBrace, RightBrace,      // {}
     LeftBracket, RightBracket,  // []
     LeftChevron, RightChevron,  // <>
-
-    Eof,
 }
 
 #[derive(PartialEq)]
@@ -68,7 +65,6 @@ pub struct Lexer<R: Read>
     state: LexerState,
     value: String,
     input: Peekable<Bytes<R>>,
-    reinjection: Option<char>,
     start_loc: Location,
     end_loc: Location,
     what: String,                // error handling
@@ -86,9 +82,8 @@ impl<R: Read> Lexer<R>
             value: String::new(),
             input: channel.bytes().peekable(),
             state: lexer::LexerState::InitialState,
-            reinjection: None,
-            start_loc: Location::new(0,0,0),
-            end_loc: Location::new(0,0,0),
+            start_loc: Location::new(0,1,1),
+            end_loc: Location::new(0,1,1),
             what: String::new(),
             stop: false
         }
@@ -108,8 +103,9 @@ impl<R: Read> Lexer<R>
         {
             match next_char(&mut self.input)
             {
-                Some('\n') | None => break,
-                _ => ()
+                Some('\n') => { self.end_loc.extend('\n'); break },
+                None => break,
+                Some(c) => self.end_loc.extend(c)
             };
         }
     }
@@ -122,18 +118,32 @@ impl<R: Read> Lexer<R>
             {
                 Some('/') => match peek_char(&mut self.input)
                 {
-                    Some('*') => {self.input.next(); self.nested_commentary()},
-                    Some(_) => (),
+                    Some('*') => {
+                        self.input.next();
+                        self.end_loc.extend('/');
+                        self.end_loc.extend('*');
+                        self.nested_commentary()
+                    },
+                    Some(_) => self.end_loc.extend('/'),
                     None => self.what = format!("Some commentary does not end")
                 },
                 Some('*') => match peek_char(&mut self.input)
                 {
-                    Some('/') => { self.input.next(); break }
-                    Some(_) => (),
+                    Some('/') => {
+                        self.input.next();
+                        self.end_loc.extend('*');
+                        self.end_loc.extend('/');
+                        break
+                    },
+                    Some(_) => self.end_loc.extend('*'),
                     None => self.what = format!("Some commentary does not end")
                 },
-                Some(_) => (),
-                None => self.what = format!("Some commentary does not end")
+                Some(c) => self.end_loc.extend(c),
+                None => {
+                    self.what = format!("Some commentary does not end");
+                    self.stop = true;
+                    break
+                }
             };
         }
     }
@@ -145,6 +155,21 @@ impl<R: Read> Lexer<R>
     fn consume(&mut self, c: char) -> Option<Token>
     {
         let mut token = None;
+
+        // First match to decide whether the char should be taken or not
+        match (self.state.clone(), c)
+        {
+            (ReadQuotedString, _) |
+            (InitialState, _) |
+            (ReadIdentifier, 'a' ... 'z') |
+            (ReadIdentifier, 'A' ... 'Z') |
+            (ReadIdentifier, '0' ... '9') |
+            (ReadIdentifier, '_') |
+            (ReadInt, '0' ... '9') |
+            (ReadInt, '_') => { self.input.next(); self.end_loc.extend(c) },
+            _ => ()
+        }
+
         match (self.state.clone(), c)
         {
             // Case ReadInt
@@ -165,7 +190,6 @@ impl<R: Read> Lexer<R>
                     }
                 };
                 self.state = InitialState;
-                self.reinjection = Some(c)
             },
 
             // Case ReadIdentifier
@@ -190,7 +214,6 @@ impl<R: Read> Lexer<R>
                 };
                 self.value.clear();
                 self.state = InitialState;
-                self.reinjection = Some(c)
             },
 
             (ReadQuotedString, '"') => {
@@ -266,7 +289,7 @@ impl<R: Read> Lexer<R>
                 _ => token = Some(Eq)
             },
 
-            // Simple character token
+            // Single character token
             (InitialState, '(') => token = Some(LeftParen),
             (InitialState, ')') => token = Some(RightParen),
             (InitialState, '[') => token = Some(LeftBracket),
@@ -285,13 +308,12 @@ impl<R: Read> Lexer<R>
             (InitialState, ' ') | (InitialState, '\n') |
             (InitialState, '\t') => self.reduce(),
             (InitialState, _) => {
-                self.what = format!("error: unrecognized character {} :{}:{}",
+                self.what = format!("error: illegal character {} :{}:{}",
                                     c,
                                     self.end_loc.line,
-                                    self.end_loc.column);
+                                    self.end_loc.column - 1);
                 self.stop = true
             }
-
         };
         token
     }
@@ -327,74 +349,25 @@ impl<R: Read> Iterator for Lexer<R>
                 let err = Error::new(ErrorKind::Other, self.what.clone());
                 return Some(Err(err))
             };
-            match self.reinjection {
-                Some (c) => {
-                    match self.consume(c) {
-                        Some(token) => {
-                            self.reinjection = None;
-                            return Some(Ok((self.start_loc.clone(),
-                                            token,
-                                            self.end_loc.clone())))
-                        },
-                        None => self.reinjection = None
-                    };
 
+            match peek_char(&mut self.input)
+            {
+                Some (c) => match self.consume(c) {
+                    Some(token) =>
+                        return Some(Ok((self.start_loc.clone(),
+                                        token,
+                                        self.end_loc.clone()))),
+                    None => ()
                 },
-                // No reinjection character
-                None => match next_char(&mut self.input) {
-                    Some (c) =>
-                    match self.consume(c) {
-                        Some(token) =>
-                            return Some(Ok((self.start_loc.clone(),
-                                            token,
-                                            self.end_loc.clone()))),
-                        None => self.end_loc.extend(c)
-                    },
-                    None => break
-                }
+                None => break
             }
         }
-        if self.state.clone() == InitialState {
-            Some(Ok((self.end_loc.clone(), Eof, self.end_loc.clone())))
-        }
-        else {
-            None
-        }
-    }
-}
-
-impl cmp::PartialEq for Token
-{
-    fn eq(&self, other: &Token) -> bool
-    {
-        match (self, other)
+        if self.state.clone() == ReadQuotedString
         {
-            (&Integer(_), &Integer(_)) |
-            (&Identifier(_), &Identifier(_)) |
-            (&StringLitteral(_), &StringLitteral(_)) |
-
-            (&Else, &Else) | (&False, &False) | (&Fn, &Fn) | (&If, &If) |
-            (&Let, &Let) | (&Mut, &Mut) | (&Return, &Return) |
-            (&Struct, &Struct) | (&True, &True) | (&While, &While) |
-
-            (&Eq, &Eq) | (&Dot, &Dot) | (&Star, &Star) | (&Colon, &Colon) |
-            (&SemiColon, &SemiColon) | (&Comma, &Comma) |
-            (&Apostrophe, &Apostrophe) |
-
-            (&Plus, &Plus) | (&Minus, &Minus) | (&Div, &Div) | (&Mod, &Mod) |
-            (&And, &And) | (&Or, &Or) |
-
-            (&DoubleEq, &DoubleEq) | (&NotEq, &NotEq) |
-            (&Geq, &Geq) | (&Leq, &Leq) |
-
-            (&Bang, &Bang) | (&Ampersand, &Ampersand) |
-            (&LeftParen, &LeftParen) | (&RightParen, &RightParen) |
-            (&LeftBrace, &LeftBrace) | (&RightBrace, &RightBrace) |
-            (&LeftChevron, &LeftChevron) | (&RightChevron, &RightChevron) |
-            (&LeftBracket, &LeftBracket) | (&RightBracket, &RightBracket)
-                => true,
-            _   => false
+            return Some(Err(Error::new(ErrorKind::Other,
+                "Unfinished string literal")))
         }
+        None
     }
 }
 
@@ -451,8 +424,6 @@ impl fmt::Display for Token
             &RightBracket => write!(f, "]"),
             &LeftChevron => write!(f, "<"),
             &RightChevron => write!(f, ">"),
-
-            &Eof => write!(f, "EOF"),
         }
     }
 }
