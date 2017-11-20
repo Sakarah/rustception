@@ -344,11 +344,13 @@ impl<R:Read> Lexer<R>
             (ReadQuotedString, _) => self.value.push(c),
 
             // Case InitialState
-            (InitialState, b'0' ... b'9') => {
+            (InitialState, b'0'...b'9') =>
+            {
                 self.value.push(c);
                 self.state = ReadInt
             },
-            (InitialState, b'a' ... b'z') => {
+            (InitialState, b'a'...b'z') | (InitialState, b'A'...b'Z') =>
+            {
                 self.value.push(c);
                 self.state = ReadIdentifier
             },
