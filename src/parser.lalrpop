@@ -1,0 +1,279 @@
+use ast;
+use lexer::{Token,LexingError};
+use location::Location;
+
+grammar;
+
+extern
+{
+    type Location = Location;
+    type Error = LexingError;
+
+    enum Token
+    {
+        Int => Token::Integer(<i32>),
+        Ident => Token::Identifier(<String>),
+        Str => Token::StringLiteral(<String>),
+
+        "else" => Token::Else,
+        "false" => Token::False,
+        "fn" => Token::Fn,
+        "if" => Token::If,
+        "let" => Token::Let,
+        "mut" => Token::Mut,
+        "return" => Token::Return,
+        "struct" => Token::Struct,
+        "true" => Token::True,
+        "while" => Token::While,
+
+        "=" => Token::Eq,
+        "." => Token::Dot,
+        "*" => Token::Star,
+        ":" => Token::Colon,
+        ";" => Token::SemiColon,
+        "," => Token::Comma,
+        "'" => Token::Apostrophe,
+
+        "+" => Token::Plus,
+        "-" => Token::Minus,
+        "/" => Token::Slash,
+        "%" => Token::Percent,
+        "&&" => Token::And,
+        "||" => Token::Or,
+
+        "==" => Token::DoubleEq,
+        "!=" => Token::NotEq,
+        ">=" => Token::Geq,
+        "<=" => Token::Leq,
+
+        "!" => Token::Bang,
+        "&" => Token::Ampersand,
+
+        "(" => Token::LeftParen,
+        ")" => Token::RightParen,
+        "{" => Token::LeftBrace,
+        "}" => Token::RightBrace,
+        "[" => Token::LeftBracket,
+        "]" => Token::RightBracket,
+        "<" => Token::LeftChevron,
+        ">" => Token::RightChevron,
+
+        "->" => Token::RightArrow,
+    }
+}
+
+pub Module: ast::Module = <decls:Decl*> =>
+{
+    let mut funs = Vec::new();
+    let mut structs = Vec::new();
+    for decl in decls
+    {
+        match decl
+        {
+            ast::Decl::Function(f) => funs.push(f),
+            ast::Decl::Structure(s) => structs.push(s)
+        }
+    }
+    ast::Module { funs: funs, structs: structs }
+};
+
+Decl: ast::Decl =
+{
+    <f:Fun> => ast::Decl::Function(f),
+    <s:Struct> => ast::Decl::Structure(s)
+};
+
+Fun: ast::Fun =
+{
+    "fn" <name:Ident> "(" <args:Comma<Arg>> ")" <ret_type:("->" Type)?>
+        <body:Block> =>
+    {
+        ast::Fun{ name:name, arguments:args,
+                  return_type:ret_type.map(|t| t.1).unwrap_or(ast::Type::Void),
+                  body:body }
+    }
+};
+
+Struct: ast::Struct =
+{
+    "struct" <name:Ident> "{" <fields:Comma<Field>> "}" =>
+        ast::Struct{name, fields}
+};
+
+Field: (ast::Ident, ast::Type) =
+{
+    <id:Ident> ":" <typ:Type> => (id, typ)
+};
+
+Type: ast::Type =
+{
+    "(" ")" => ast::Type::Void,
+    <id:Ident> => ast::Type::Basic(id),
+
+    <id:Ident> "<" <params:Comma<Type>> ">" =>
+        ast::Type::Parametrized(id, params),
+
+    "&" <t:Type> => ast::Type::Ref(Box::new(t)),
+    "&" "mut" <t:Type> => ast::Type::MutRef(Box::new(t))
+};
+
+Arg: ast::Arg =
+{
+    <m:Mut> <name:Ident> ":" <typ:Type> =>
+        ast::Arg(m, name, typ)
+};
+
+Mut: ast::Mut =
+{
+    <m:"mut"?> =>
+        if m.is_some() {ast::Mut::Mutable} else {ast::Mut::Constant}
+};
+
+Block: ast::Block =
+{
+    "{" <instr:Instr*> <expr:Expr?> "}" =>
+        ast::Block(instr, expr.unwrap_or(ast::EXPR_VOID))
+};
+
+Instr: ast::Instr =
+{
+    ";" => ast::Instr::NoOp,
+
+    <expr:Expr> ";" => ast::Instr::Expression(expr),
+
+    "let" <m:Mut> <id:Ident> "=" <expr:StructExpr> ";" =>
+        ast::Instr::Let(m, id, expr),
+
+    "while" <cond:Expr> <body:Block> =>
+        ast::Instr::While(cond, Box::new(body)),
+
+    "return" <expr:Expr?> ";" =>
+        ast::Instr::Return(expr.unwrap_or(ast::EXPR_VOID)),
+
+    <instr:IfInstr> => ast::Instr::If(instr)
+};
+
+IfInstr: ast::IfInstr =
+{
+    "if" <cond:Expr> <block_true:Block> <block_false: ("else" Block)?> =>
+    {
+        let empty_block = ast::Block(Vec::new(), ast::EXPR_VOID);
+        let block_false = block_false.map(|b| b.1).unwrap_or(empty_block);
+        ast::IfInstr::Single(cond, Box::new(block_true), Box::new(block_false))
+    },
+    "if" <cond:Expr> <block:Block> "else" <elif:IfInstr> =>
+        ast::IfInstr::Nested(cond, Box::new(block), Box::new(elif))
+};
+
+StructExpr: ast::Expr =
+{
+    <struct_name:Ident> "{" <fields:Comma<FieldValue>> "}" =>
+        ast::Expr::StructConstr(struct_name, fields),
+    <e:Expr> => e
+};
+
+FieldValue: (ast::Ident, ast::Expr) =
+{
+    <name:Ident> ":" <val:Expr> => (name, val)
+};
+
+Expr: ast::Expr =
+{
+    <var:OrExpr> "=" <val:Expr> =>
+        ast::Expr::Assignment(Box::new(var), Box::new(val)),
+    <e:OrExpr> => e
+};
+
+OrExpr: ast::Expr =
+{
+    <l:OrExpr> "||" <r:AndExpr> => ast::Expr::Or(Box::new(l),Box::new(r)),
+    <e:AndExpr> => e
+};
+
+AndExpr: ast::Expr =
+{
+    <l:AndExpr> "&&" <r:CmpExpr> => ast::Expr::And(Box::new(l),Box::new(r)),
+    <e:CmpExpr> => e
+};
+
+CmpExpr: ast::Expr =
+{
+    <l:Term> <comp:Comparator> <r:Term> =>
+        ast::Expr::Comparison(comp, Box::new(l), Box::new(r)),
+    <e:Term> => e
+};
+
+Comparator: ast::Comp =
+{
+    "==" => ast::Comp::Equal,
+    "!=" => ast::Comp::NotEqual,
+    "<"  => ast::Comp::Less,
+    "<=" => ast::Comp::LessEq,
+    ">"  => ast::Comp::Greater,
+    ">=" => ast::Comp::GreaterEq
+};
+
+Term: ast::Expr =
+{
+    <l:Term> "+" <r:Factor> =>
+        ast::Expr::Addition(Box::new(l), Box::new(r)),
+    <l:Term> "-" <r:Factor> =>
+        ast::Expr::Substraction(Box::new(l), Box::new(r)),
+    <e:Factor> => e
+};
+
+Factor: ast::Expr =
+{
+    <l:Factor> "*" <r:UnaryExpr> =>
+        ast::Expr::Multiplication(Box::new(l), Box::new(r)),
+    <l:Factor> "/" <r:UnaryExpr> =>
+        ast::Expr::Division(Box::new(l), Box::new(r)),
+    <l:Factor> "%" <r:UnaryExpr> =>
+        ast::Expr::Remainder(Box::new(l), Box::new(r)),
+    <e:UnaryExpr> => e
+};
+
+UnaryExpr: ast::Expr =
+{
+    "-" <e:ArrExpr> => ast::Expr::Minus(Box::new(e)),
+    "!" <e:ArrExpr> => ast::Expr::Not(Box::new(e)),
+    "*" <e:ArrExpr> => ast::Expr::Deref(Box::new(e)),
+    "&" <e:ArrExpr> => ast::Expr::Ref(Box::new(e)),
+    "&" "mut" <e:ArrExpr> => ast::Expr::MutRef(Box::new(e)),
+    <e:ArrExpr> => e
+};
+
+ArrExpr: ast::Expr =
+{
+    <e:DotExpr> "[" <i:Expr> "]" =>
+        ast::Expr::ArrayAccess(Box::new(e), Box::new(i)),
+    <e:DotExpr> => e
+};
+
+DotExpr: ast::Expr =
+{
+    <e:DotExpr> "." <attr:Ident> =>
+        ast::Expr::Attribute(Box::new(e), attr),
+    <e:DotExpr> "." <method:Ident> "(" <params:Comma<Expr>> ")" =>
+        ast::Expr::MethodCall(Box::new(e), method, params),
+    <e:AtomicExpr> => e
+};
+
+AtomicExpr: ast::Expr =
+{
+    <int:Int> => ast::Expr::Constant(ast::Const::Int32(int)),
+    "true" => ast::Expr::Constant(ast::Const::Bool(true)),
+    "false" => ast::Expr::Constant(ast::Const::Bool(false)),
+    <var:Ident> => ast::Expr::Variable(var),
+    <name:Ident> "(" <params:Comma<Expr>> ")" =>
+        ast::Expr::FunctionCall(name, params),
+    <name:Ident> "!" "[" <l:Comma<Expr>> "]" => ast::Expr::ListMacro(name, l),
+    <name:Ident> "!" "(" <s:Str> ")" => ast::Expr::StringMacro(name,s),
+    "(" <e:Expr> ")" => e,
+    <block:Block> => ast::Expr::NestedBlock(Box::new(block))
+};
+
+SeparatedList<S,E>: Vec<E> =
+    <v:(<E> S)*> <e:E?> => v.into_iter().chain(e).collect();
+
+Comma<E> = SeparatedList<",", E>;

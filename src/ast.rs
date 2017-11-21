@@ -1,26 +1,32 @@
-type Ident = String;
+pub type Ident = String;
 
-struct Module // (<Fun> | <Struct>)*
+pub struct Module // (<Fun> | <Struct>)*
 {
-    funs: Vec<Fun>,
-    structs: Vec<Struct>
+    pub funs: Vec<Fun>,
+    pub structs: Vec<Struct>
 }
 
-struct Fun // fn <Ident>(<Arg>,*) -> <Type> <Block>
+pub struct Fun // fn <Ident>(<Arg>,*) -> <Type> <Block>
 {
-    name: Ident,
-    arguments: Vec<Arg>,
-    returnType: Type,
-    implementation: Block
+    pub name: Ident,
+    pub arguments: Vec<Arg>,
+    pub return_type: Type,
+    pub body: Block
 }
 
-struct Struct // struct <Ident> { (<Ident> : <Type>),* }
+pub struct Struct // struct <Ident> { (<Ident> : <Type>),* }
 {
-    name: Ident,
-    fields: Vec<(Ident, Type)>
+    pub name: Ident,
+    pub fields: Vec<(Ident, Type)>
 }
 
-enum Type
+pub enum Decl // Used internally by parser
+{
+    Function(Fun),
+    Structure(Struct)
+}
+
+pub enum Type
 {
     Void,                           // ()
     Basic(Ident),                   // <Ident>
@@ -29,16 +35,16 @@ enum Type
     MutRef(Box<Type>)               // &mut <Type>
 }
 
-enum Mut
+pub enum Mut
 {
     Constant,   // ε
     Mutable     // mut
 }
-struct Arg(Mut, Ident, Type); // <Mut> <Ident> : <Type>
+pub struct Arg(pub Mut, pub Ident, pub Type); // <Mut> <Ident> : <Type>
 
-struct Block(Vec<Instr>, Expr); // { <Instr>* <Expr>? }
+pub struct Block(pub Vec<Instr>, pub Expr); // { <Instr>* <Expr>? }
 
-enum Instr
+pub enum Instr
 {
     NoOp,                    // ;
     Expression(Expr),        // <Expr>;
@@ -48,37 +54,52 @@ enum Instr
     If(IfInstr)              // <IfInstr>
 }
 
-enum IfInstr
+pub enum IfInstr
 {
-    SingleIf(Expr, Box<Block>),             // if <Expr> <Block>
-    IfElse(Expr, Box<Block>, Box<Block>),   // if <Expr> <Block> else <Block>
-    IfElseIf(Expr, Box<Block>, Box<IfInstr>)// if <Expr> <Block> else <IfInstr>
+    Single(Expr, Box<Block>, Box<Block>), // if <Expr> <Block> (else <Block>)?
+    Nested(Expr, Box<Block>, Box<IfInstr>)// if <Expr> <Block> else <IfInstr>
 }
 
-enum Expr
+pub enum Expr
 {
+    Assignment(Box<Expr>, Box<Expr>),       // <Expr> = <Expr>
+    Or(Box<Expr>, Box<Expr>),               // <Expr> || <Expr>
+    And(Box<Expr>, Box<Expr>),              // <Expr> && <Expr>
+    Comparison(Comp, Box<Expr>, Box<Expr>), // <Expr> <Comp> <Expr>
+
+    Addition(Box<Expr>, Box<Expr>),         // <Expr> + <Expr>
+    Substraction(Box<Expr>, Box<Expr>),     // <Expr> - <Expr>
+    Multiplication(Box<Expr>, Box<Expr>),   // <Expr> * <Expr>
+    Division(Box<Expr>, Box<Expr>),         // <Expr> / <Expr>
+    Remainder(Box<Expr>, Box<Expr>),        // <Expr> % <Expr>
+
+    Minus(Box<Expr>),                       // - <Expr>
+    Not(Box<Expr>),                         // ! <Expr>
+    Deref(Box<Expr>),                       // * <Expr>
+    Ref(Box<Expr>),                         // & <Expr>
+    MutRef(Box<Expr>),                      // & mut <Expr>
+
+    ArrayAccess(Box<Expr>, Box<Expr>),      // <Expr>[<Expr>]
+    Attribute(Box<Expr>, Ident),            // <Expr>.<Ident>
+    MethodCall(Box<Expr>, Ident, Vec<Expr>),// <Expr>.<Ident>(<Expr>,*)
+
     Constant(Const),                        // <Const>
     Variable(Ident),                        // <Ident>
-    BinaryOp(BinOp, Box<Expr>, Box<Expr>),  // <Expr1> <BinOp> <Expr2>
-    UnaryOp(UnOp, Box<Expr>),               // <UnOp> <Expr>
-    StructAccess(Box<Expr>, Ident),         // <Expr>.<Ident>
-    MethodCall(Box<Expr>, Ident, Vec<Expr>),// <Expr>.<Ident>(<Expr>,*)
-    ArrayAccess(Box<Expr>, Box<Expr>),      // <Expr>[<Expr>]
     FunctionCall(Ident, Vec<Expr>),         // <Ident>(<Expr>,*)
     StructConstr(Ident, Vec<(Ident, Expr)>),// <Ident>{ (<Ident>:<Expr>),* }
-    VecConstr(Vec<Expr>),                   // vec![<Expr>,*]
-    Print(String),                          // print!("<Chaîne>")
+    ListMacro(Ident,Vec<Expr>),             // <Ident>![<Expr>,*]
+    StringMacro(Ident,String),              // <Ident>!("<Chaîne>")
     NestedBlock(Box<Block>)                 // <Block>
 }
 
-enum Const
+pub enum Const
 {
     Void,
     Int32(i32),
     Bool(bool)
 }
 
-enum BinOp
+pub enum Comp
 {
     Equal,      // ==
     NotEqual,   // !=
@@ -86,22 +107,6 @@ enum BinOp
     LessEq,     // <=
     Greater,    // >
     GreaterEq,  // >=
-    Add,        // +
-    Sub,        // -
-    Mul,        // *
-    Div,        // /
-    Mod,        // %
-    And,        // &&
-    Or,         // ||
-    Assign      // =
 }
 
-enum UnOp
-{
-    Minus,      // -
-    Not,        // !
-    Deref,      // *
-    Ref,        // &
-    MutRef      // &mut
-}
-
+pub const EXPR_VOID : Expr = Expr::Constant(Const::Void);

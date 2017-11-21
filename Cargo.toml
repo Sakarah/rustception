@@ -2,5 +2,10 @@
 name = "rustception"
 version = "0.0.1"
 authors = ["skodt", "sakarah"]
+build = "build.rs"
+
+[build-dependencies]
+lalrpop = "0.13.1"
 
 [dependencies]
+lalrpop-util = "0.13.1"

@@ -38,7 +38,7 @@ impl fmt::Display for Location
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
     {
-        write!(f, ":{}:{}", self.line, self.column)
+        write!(f, "l{}c{}", self.line, self.column)
     }
 }
 
@@ -58,11 +58,6 @@ pub struct Span
 
 impl Span
 {
-    pub fn new(start:Location, end:Location) -> Self
-    {
-        Span{start, end}
-    }
-
     /// Extend the location by one character
     pub fn extend(&mut self, c: u8)
     {
@@ -91,13 +86,12 @@ impl fmt::Display for Span
     {
         if self.start.line == self.end.line
         {
-            write!(f, ":{}:{}-{}", self.start.line,
+            write!(f, "l{}c{}-{}", self.start.line,
                                    self.start.column, self.end.column)
         }
         else
         {
-            write!(f, ":{}:{} - :{}:{}", self.start.line, self.start.column,
-                                         self.end.line, self.end.column)
+            write!(f, "{}-{}", self.start, self.end)
         }
     }
 }
