@@ -132,7 +132,23 @@ Mut: ast::Mut =
 Block: ast::Block =
 {
     "{" <instr:Instr*> <expr:Expr?> "}" =>
-        ast::Block(instr, expr.unwrap_or(ast::EXPR_VOID))
+    {
+        match expr
+        {
+            Some(e) => ast::Block(instr, e),
+            None =>
+            {
+                let mut fst_instr = instr.clone();
+                match fst_instr.pop()
+                {
+                    None => ast::Block(instr, ast::EXPR_VOID),
+                    Some(ast::Instr::If(if_expr)) =>
+                        ast::Block(fst_instr, ast::Expr::If(Box::new(if_expr))),
+                    Some(_) => ast::Block(instr, ast::EXPR_VOID)
+                }
+            }
+        }
+    }
 };
 
 Instr: ast::Instr =
@@ -150,19 +166,19 @@ Instr: ast::Instr =
     "return" <expr:Expr?> ";" =>
         ast::Instr::Return(expr.unwrap_or(ast::EXPR_VOID)),
 
-    <instr:IfInstr> => ast::Instr::If(instr)
+    <instr:IfExpr> => ast::Instr::If(instr)
 };
 
-IfInstr: ast::IfInstr =
+IfExpr: ast::IfExpr =
 {
     "if" <cond:Expr> <block_true:Block> <block_false: ("else" Block)?> =>
     {
         let empty_block = ast::Block(Vec::new(), ast::EXPR_VOID);
         let block_false = block_false.map(|b| b.1).unwrap_or(empty_block);
-        ast::IfInstr::Single(cond, Box::new(block_true), Box::new(block_false))
+        ast::IfExpr::Single(cond, Box::new(block_true), Box::new(block_false))
     },
-    "if" <cond:Expr> <block:Block> "else" <elif:IfInstr> =>
-        ast::IfInstr::Nested(cond, Box::new(block), Box::new(elif))
+    "if" <cond:Expr> <block:Block> "else" <elif:IfExpr> =>
+        ast::IfExpr::Nested(cond, Box::new(block), Box::new(elif))
 };
 
 StructExpr: ast::Expr =

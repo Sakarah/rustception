@@ -35,6 +35,7 @@ pub enum Type
     MutRef(Box<Type>)               // &mut <Type>
 }
 
+#[derive(Clone)]
 pub enum Mut
 {
     Constant,   // ε
@@ -42,8 +43,10 @@ pub enum Mut
 }
 pub struct Arg(pub Mut, pub Ident, pub Type); // <Mut> <Ident> : <Type>
 
+#[derive(Clone)]
 pub struct Block(pub Vec<Instr>, pub Expr); // { <Instr>* <Expr>? }
 
+#[derive(Clone)]
 pub enum Instr
 {
     NoOp,                    // ;
@@ -51,15 +54,17 @@ pub enum Instr
     Let(Mut, Ident, Expr),   // let <Mut> <Ident> = <Expr>;
     While(Expr, Box<Block>), // while <Expr> <Block>
     Return(Expr),            // return <Expr>?;
-    If(IfInstr)              // <IfInstr>
+    If(IfExpr)               // <IfInstr>
 }
 
-pub enum IfInstr
+#[derive(Clone)]
+pub enum IfExpr
 {
     Single(Expr, Box<Block>, Box<Block>), // if <Expr> <Block> (else <Block>)?
-    Nested(Expr, Box<Block>, Box<IfInstr>)// if <Expr> <Block> else <IfInstr>
+    Nested(Expr, Box<Block>, Box<IfExpr>) // if <Expr> <Block> else <IfInstr>
 }
 
+#[derive(Clone)]
 pub enum Expr
 {
     Assignment(Box<Expr>, Box<Expr>),       // <Expr> = <Expr>
@@ -89,9 +94,11 @@ pub enum Expr
     StructConstr(Ident, Vec<(Ident, Expr)>),// <Ident>{ (<Ident>:<Expr>),* }
     ListMacro(Ident,Vec<Expr>),             // <Ident>![<Expr>,*]
     StringMacro(Ident,String),              // <Ident>!("<Chaîne>")
+    If(Box<IfExpr>),                        // <IfExpr>
     NestedBlock(Box<Block>)                 // <Block>
 }
 
+#[derive(Clone)]
 pub enum Const
 {
     Void,
@@ -99,6 +106,7 @@ pub enum Const
     Bool(bool)
 }
 
+#[derive(Clone)]
 pub enum Comp
 {
     Equal,      // ==
