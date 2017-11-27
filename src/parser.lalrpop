@@ -1,6 +1,6 @@
 use ast;
 use lexer::{Token,LexingError};
-use location::Location;
+use location::{Location, Span};
 
 grammar;
 
@@ -62,19 +62,9 @@ extern
     }
 }
 
-pub Module: ast::Module = <decls:Decl*> =>
+pub Program: ast::Program =
 {
-    let mut funs = Vec::new();
-    let mut structs = Vec::new();
-    for decl in decls
-    {
-        match decl
-        {
-            ast::Decl::Function(f) => funs.push(f),
-            ast::Decl::Structure(s) => structs.push(s)
-        }
-    }
-    ast::Module { funs: funs, structs: structs }
+    <decls:Decl*> => decls
 };
 
 Decl: ast::Decl =
@@ -85,42 +75,40 @@ Decl: ast::Decl =
 
 Fun: ast::Fun =
 {
-    "fn" <name:Ident> "(" <args:Comma<Arg>> ")" <ret_type:("->" Type)?>
+    "fn" <name:Loc<Ident>> "(" <args:Comma<Arg>> ")" "->" <ret_type:Loc<Type>>
         <body:Block> =>
-    {
-        ast::Fun{ name:name, arguments:args,
-                  return_type:ret_type.map(|t| t.1).unwrap_or(ast::Type::Void),
-                  body:body }
-    }
+        ast::Fun{ name, arguments:args, return_type:ret_type, body },
+    "fn" <name:Loc<Ident>> "(" <args:Comma<Arg>> ")" <body:Block> =>
+        ast::Fun{ name, arguments:args,
+                  return_type: (ast::Type::Void, Span::default()), body }
 };
 
 Struct: ast::Struct =
 {
-    "struct" <name:Ident> "{" <fields:Comma<Field>> "}" =>
+    "struct" <name:Loc<Ident>> "{" <fields:Comma<Field>> "}" =>
         ast::Struct{name, fields}
 };
 
-Field: (ast::Ident, ast::Type) =
+Field: (ast::LIdent, ast::LType) =
 {
-    <id:Ident> ":" <typ:Type> => (id, typ)
+    <id:Loc<Ident>> ":" <typ:Loc<Type>> => (id, typ)
 };
 
 Type: ast::Type =
 {
     "(" ")" => ast::Type::Void,
-    <id:Ident> => ast::Type::Basic(id),
+    <id:Loc<Ident>> => ast::Type::Basic(id),
 
-    <id:Ident> "<" <params:Comma<Type>> ">" =>
+    <id:Loc<Ident>> "<" <params:Comma<Loc<Type>>> ">" =>
         ast::Type::Parametrized(id, params),
 
-    "&" <t:Type> => ast::Type::Ref(Box::new(t)),
-    "&" "mut" <t:Type> => ast::Type::MutRef(Box::new(t))
+    "&" <t:Loc<Type>> => ast::Type::Ref(Box::new(t)),
+    "&" "mut" <t:Loc<Type>> => ast::Type::MutRef(Box::new(t))
 };
 
 Arg: ast::Arg =
 {
-    <m:Mut> <name:Ident> ":" <typ:Type> =>
-        ast::Arg(m, name, typ)
+    <m:Mut> <name:Loc<Ident>> ":" <typ:Loc<Type>> => (m, name, typ)
 };
 
 Mut: ast::Mut =
@@ -131,7 +119,7 @@ Mut: ast::Mut =
 
 Block: ast::Block =
 {
-    "{" <instr:Instr*> <expr:Expr?> "}" =>
+    "{" <instr:(Loc<Instr>)*> <expr:(Loc<Expr>)?> "}" =>
     {
         match expr
         {
@@ -141,10 +129,11 @@ Block: ast::Block =
                 let mut fst_instr = instr.clone();
                 match fst_instr.pop()
                 {
-                    None => ast::Block(instr, ast::EXPR_VOID),
-                    Some(ast::Instr::If(if_expr)) =>
-                        ast::Block(fst_instr, ast::Expr::If(Box::new(if_expr))),
-                    Some(_) => ast::Block(instr, ast::EXPR_VOID)
+                    None => ast::Block(instr, ast::LEXPR_VOID),
+                    Some((ast::Instr::If(if_expr), loc)) =>
+                        ast::Block(fst_instr,
+                                   (ast::Expr::If(Box::new(if_expr)), loc)),
+                    Some(_) => ast::Block(instr, ast::LEXPR_VOID)
                 }
             }
         }
@@ -155,66 +144,69 @@ Instr: ast::Instr =
 {
     ";" => ast::Instr::NoOp,
 
-    <expr:Expr> ";" => ast::Instr::Expression(expr),
+    <expr:Loc<Expr>> ";" => ast::Instr::Expression(expr),
 
-    "let" <m:Mut> <id:Ident> "=" <expr:StructExpr> ";" =>
+    "let" <m:Mut> <id:Loc<Ident>> "=" <expr:Loc<StructExpr>> ";" =>
         ast::Instr::Let(m, id, expr),
 
-    "while" <cond:Expr> <body:Block> =>
+    "while" <cond:Loc<Expr>> <body:Block> =>
         ast::Instr::While(cond, Box::new(body)),
 
-    "return" <expr:Expr?> ";" =>
-        ast::Instr::Return(expr.unwrap_or(ast::EXPR_VOID)),
+    "return" <expr:(Loc<Expr>)?> ";" =>
+        ast::Instr::Return(expr.unwrap_or(ast::LEXPR_VOID)),
 
     <instr:IfExpr> => ast::Instr::If(instr)
 };
 
 IfExpr: ast::IfExpr =
 {
-    "if" <cond:Expr> <block_true:Block> <block_false: ("else" Block)?> =>
+    "if" <cond:Loc<Expr>> <block_true:Block> =>
     {
-        let empty_block = ast::Block(Vec::new(), ast::EXPR_VOID);
-        let block_false = block_false.map(|b| b.1).unwrap_or(empty_block);
-        ast::IfExpr::Single(cond, Box::new(block_true), Box::new(block_false))
+        let empty_block = ast::Block(Vec::new(), ast::LEXPR_VOID);
+        ast::IfExpr::Single(cond, Box::new(block_true), Box::new(empty_block))
     },
-    "if" <cond:Expr> <block:Block> "else" <elif:IfExpr> =>
+    "if" <cond:Loc<Expr>> <block_true:Block> "else" <block_false:Block> =>
+        ast::IfExpr::Single(cond, Box::new(block_true), Box::new(block_false)),
+    "if" <cond:Loc<Expr>> <block:Block> "else" <elif:IfExpr> =>
         ast::IfExpr::Nested(cond, Box::new(block), Box::new(elif))
 };
 
 StructExpr: ast::Expr =
 {
-    <struct_name:Ident> "{" <fields:Comma<FieldValue>> "}" =>
+    <struct_name:Loc<Ident>> "{" <fields:Comma<FieldValue>> "}" =>
         ast::Expr::StructConstr(struct_name, fields),
     <e:Expr> => e
 };
 
-FieldValue: (ast::Ident, ast::Expr) =
+FieldValue: (ast::LIdent, ast::LExpr) =
 {
-    <name:Ident> ":" <val:Expr> => (name, val)
+    <name:Loc<Ident>> ":" <val:Loc<Expr>> => (name, val)
 };
 
 Expr: ast::Expr =
 {
-    <var:OrExpr> "=" <val:Expr> =>
+    <var:Loc<OrExpr>> "=" <val:Loc<Expr>> =>
         ast::Expr::Assignment(Box::new(var), Box::new(val)),
     <e:OrExpr> => e
 };
 
 OrExpr: ast::Expr =
 {
-    <l:OrExpr> "||" <r:AndExpr> => ast::Expr::Or(Box::new(l),Box::new(r)),
+    <l:Loc<OrExpr>> "||" <r:Loc<AndExpr>> =>
+        ast::Expr::Or(Box::new(l),Box::new(r)),
     <e:AndExpr> => e
 };
 
 AndExpr: ast::Expr =
 {
-    <l:AndExpr> "&&" <r:CmpExpr> => ast::Expr::And(Box::new(l),Box::new(r)),
+    <l:Loc<AndExpr>> "&&" <r:Loc<CmpExpr>> =>
+        ast::Expr::And(Box::new(l),Box::new(r)),
     <e:CmpExpr> => e
 };
 
 CmpExpr: ast::Expr =
 {
-    <l:Term> <comp:Comparator> <r:Term> =>
+    <l:Loc<Term>> <comp:Comparator> <r:Loc<Term>> =>
         ast::Expr::Comparison(comp, Box::new(l), Box::new(r)),
     <e:Term> => e
 };
@@ -231,46 +223,47 @@ Comparator: ast::Comp =
 
 Term: ast::Expr =
 {
-    <l:Term> "+" <r:Factor> =>
+    <l:Loc<Term>> "+" <r:Loc<Factor>> =>
         ast::Expr::Addition(Box::new(l), Box::new(r)),
-    <l:Term> "-" <r:Factor> =>
+    <l:Loc<Term>> "-" <r:Loc<Factor>> =>
         ast::Expr::Substraction(Box::new(l), Box::new(r)),
     <e:Factor> => e
 };
 
 Factor: ast::Expr =
 {
-    <l:Factor> "*" <r:UnaryExpr> =>
+    <l:Loc<Factor>> "*" <r:Loc<UnaryExpr>> =>
         ast::Expr::Multiplication(Box::new(l), Box::new(r)),
-    <l:Factor> "/" <r:UnaryExpr> =>
+    <l:Loc<Factor>> "/" <r:Loc<UnaryExpr>> =>
         ast::Expr::Division(Box::new(l), Box::new(r)),
-    <l:Factor> "%" <r:UnaryExpr> =>
+    <l:Loc<Factor>> "%" <r:Loc<UnaryExpr>> =>
         ast::Expr::Remainder(Box::new(l), Box::new(r)),
     <e:UnaryExpr> => e
 };
 
 UnaryExpr: ast::Expr =
 {
-    "-" <e:ArrExpr> => ast::Expr::Minus(Box::new(e)),
-    "!" <e:ArrExpr> => ast::Expr::Not(Box::new(e)),
-    "*" <e:ArrExpr> => ast::Expr::Deref(Box::new(e)),
-    "&" <e:ArrExpr> => ast::Expr::Ref(Box::new(e)),
-    "&" "mut" <e:ArrExpr> => ast::Expr::MutRef(Box::new(e)),
+    "-" <e:Loc<ArrExpr>> => ast::Expr::Minus(Box::new(e)),
+    "!" <e:Loc<ArrExpr>> => ast::Expr::Not(Box::new(e)),
+    "*" <e:Loc<ArrExpr>> => ast::Expr::Deref(Box::new(e)),
+    "&" <e:Loc<ArrExpr>> => ast::Expr::Ref(Box::new(e)),
+    "&" "mut" <e:Loc<ArrExpr>> => ast::Expr::MutRef(Box::new(e)),
     <e:ArrExpr> => e
 };
 
 ArrExpr: ast::Expr =
 {
-    <e:DotExpr> "[" <i:Expr> "]" =>
+    <e:Loc<DotExpr>> "[" <i:Loc<Expr>> "]" =>
         ast::Expr::ArrayAccess(Box::new(e), Box::new(i)),
     <e:DotExpr> => e
 };
 
 DotExpr: ast::Expr =
 {
-    <e:DotExpr> "." <attr:Ident> =>
+    <e:Loc<DotExpr>> "." <attr:Loc<Ident>> =>
         ast::Expr::Attribute(Box::new(e), attr),
-    <e:DotExpr> "." <method:Ident> "(" <params:Comma<Expr>> ")" =>
+    <e:Loc<DotExpr>> "." <method:Loc<Ident>>
+        "(" <params:Comma<Loc<Expr>>> ")" =>
         ast::Expr::MethodCall(Box::new(e), method, params),
     <e:AtomicExpr> => e
 };
@@ -280,11 +273,12 @@ AtomicExpr: ast::Expr =
     <int:Int> => ast::Expr::Constant(ast::Const::Int32(int)),
     "true" => ast::Expr::Constant(ast::Const::Bool(true)),
     "false" => ast::Expr::Constant(ast::Const::Bool(false)),
-    <var:Ident> => ast::Expr::Variable(var),
-    <name:Ident> "(" <params:Comma<Expr>> ")" =>
+    <var:Loc<Ident>> => ast::Expr::Variable(var),
+    <name:Loc<Ident>> "(" <params:Comma<Loc<Expr>>> ")" =>
         ast::Expr::FunctionCall(name, params),
-    <name:Ident> "!" "[" <l:Comma<Expr>> "]" => ast::Expr::ListMacro(name, l),
-    <name:Ident> "!" "(" <s:Str> ")" => ast::Expr::StringMacro(name,s),
+    <name:Loc<Ident>> "!" "[" <l:Comma<Loc<Expr>>> "]" =>
+        ast::Expr::ListMacro(name, l),
+    <name:Loc<Ident>> "!" "(" <s:Str> ")" => ast::Expr::StringMacro(name,s),
     "(" <e:Expr> ")" => e,
     <block:Block> => ast::Expr::NestedBlock(Box::new(block))
 };
@@ -293,3 +287,10 @@ SeparatedList<S,E>: Vec<E> =
     <v:(<E> S)*> <e:E?> => v.into_iter().chain(e).collect();
 
 Comma<E> = SeparatedList<",", E>;
+
+#[inline]
+Loc<E>: (E,Span) =
+{
+    <l: @L> <e: E> <r: @R> => (e, Span{start:l, end:r})
+};
+

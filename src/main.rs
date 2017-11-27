@@ -29,7 +29,7 @@ fn main()
         println!("Unable to open file '{}': {}", &filename, err);
         exit(1); });
     let lexer = Lexer::from_channel(file);
-    let _ = parser::parse_Module(lexer).unwrap_or_else(|err| {
+    let _ = parser::parse_Program(lexer).unwrap_or_else(|err| {
         println!("Parsing error: {}", err);
         exit(1); });
     if parse_only { exit(0); }

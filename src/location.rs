@@ -14,31 +14,19 @@ pub struct Location
     pub column: u32,
 }
 
-impl Location
-{
-    pub fn new(offset: u32, line: u32, column: u32) -> Self
-    {
-        Location {
-            line: line,
-            column: column,
-            offset: offset,
-        }
-    }
-}
+const DEFAULT_LOCATION : Location = Location{offset:0, line:1, column:1};
+const NOWHERE : Location = Location{offset:0, line:0, column:0};
 
 impl Default for Location
 {
-    fn default() -> Self
-    {
-        Location::new(0,1,1)
-    }
+    fn default() -> Self { DEFAULT_LOCATION }
 }
 
 impl fmt::Display for Location
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
     {
-        write!(f, "l{}c{}", self.line, self.column)
+        write!(f, "line {}, character {}", self.line, self.column)
     }
 }
 
@@ -49,12 +37,14 @@ impl fmt::Display for Location
 //   ___) | |_) | (_| | | | |
 //  |____/| .__/ \__,_|_| |_|
 //        |_|
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Span
 {
     pub start: Location,
     pub end: Location
 }
+
+pub const EMPTY_SPAN : Span = Span{start:NOWHERE, end:NOWHERE};
 
 impl Span
 {
@@ -86,7 +76,7 @@ impl fmt::Display for Span
     {
         if self.start.line == self.end.line
         {
-            write!(f, "l{}c{}-{}", self.start.line,
+            write!(f, "line {}, characters {}-{}", self.start.line,
                                    self.start.column, self.end.column)
         }
         else
