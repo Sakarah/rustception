@@ -11,3 +11,4 @@ Cargo.lock
 
 # Avoid versionning generated files
 src/parser.rs
+prustc
