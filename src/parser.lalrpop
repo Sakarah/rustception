@@ -1,6 +1,6 @@
 use ast;
 use lexer::{Token,LexingError};
-use location::{Location, Span};
+use location::*;
 
 grammar;
 
@@ -79,8 +79,8 @@ Fun: ast::Fun =
         <body:Block> =>
         ast::Fun{ name, arguments:args, return_type:ret_type, body },
     "fn" <name:Loc<Ident>> "(" <args:Comma<Arg>> ")" <body:Block> =>
-        ast::Fun{ name, arguments:args,
-                  return_type: (ast::Type::Void, Span::default()), body }
+        ast::Fun{ name, arguments:args, body,
+                  return_type: Located::new(ast::Type::Void, EMPTY_SPAN) }
 };
 
 Struct: ast::Struct =
@@ -99,8 +99,8 @@ Type: ast::Type =
     "(" ")" => ast::Type::Void,
     <id:Loc<Ident>> => ast::Type::Basic(id),
 
-    <id:Loc<Ident>> "<" <params:Comma<Loc<Type>>> ">" =>
-        ast::Type::Parametrized(id, params),
+    <id:Loc<Ident>> "<" <params:Loc<Type>> ">" =>
+        ast::Type::Parametrized(id, Box::new(params)),
 
     "&" <t:Loc<Type>> => ast::Type::Ref(Box::new(t)),
     "&" "mut" <t:Loc<Type>> => ast::Type::MutRef(Box::new(t))
@@ -108,7 +108,8 @@ Type: ast::Type =
 
 Arg: ast::Arg =
 {
-    <m:Mut> <name:Loc<Ident>> ":" <typ:Loc<Type>> => (m, name, typ)
+    <m:Mut> <name:Loc<Ident>> ":" <typ:Loc<Type>> =>
+        ast::Arg { m, name, typ }
 };
 
 Mut: ast::Mut =
@@ -121,20 +122,29 @@ Block: ast::Block =
 {
     "{" <instr:(Loc<Instr>)*> <expr:(Loc<Expr>)?> "}" =>
     {
-        match expr
+        if let Some(e) = expr
         {
-            Some(e) => ast::Block(instr, e),
-            None =>
+            ast::Block(instr, e)
+        }
+        else
+        {
+            let mut instr = instr;
+            if let Some(Located { data, loc }) = instr.pop()
             {
-                let mut fst_instr = instr.clone();
-                match fst_instr.pop()
+                if let ast::Instr::If(if_expr) = data
                 {
-                    None => ast::Block(instr, ast::LEXPR_VOID),
-                    Some((ast::Instr::If(if_expr), loc)) =>
-                        ast::Block(fst_instr,
-                                   (ast::Expr::If(Box::new(if_expr)), loc)),
-                    Some(_) => ast::Block(instr, ast::LEXPR_VOID)
+                    ast::Block(instr,
+                        Located::new(ast::Expr::If(Box::new(if_expr)), loc))
                 }
+                else
+                {
+                    instr.push(Located::new(data, loc));
+                    ast::Block(instr, ast::LEXPR_VOID)
+                }
+            }
+            else
+            {
+                ast::Block(instr, ast::LEXPR_VOID)
             }
         }
     }
@@ -289,8 +299,8 @@ SeparatedList<S,E>: Vec<E> =
 Comma<E> = SeparatedList<",", E>;
 
 #[inline]
-Loc<E>: (E,Span) =
+Loc<E>: Located<E> =
 {
-    <l: @L> <e: E> <r: @R> => (e, Span{start:l, end:r})
+    <l: @L> <e: E> <r: @R> => Located::new(e, Span{start:l, end:r})
 };
 

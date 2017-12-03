@@ -86,3 +86,30 @@ impl fmt::Display for Span
     }
 }
 
+//   _                    _           _  _________  
+//  | |    ___   ___ __ _| |_ ___  __| |/ /_   _\ \ 
+//  | |   / _ \ / __/ _` | __/ _ \/ _` / /  | |  \ \
+//  | |__| (_) | (_| (_| | ||  __/ (_| \ \  | |  / /
+//  |_____\___/ \___\__,_|\__\___|\__,_|\_\ |_| /_/ 
+//                                                  
+pub struct Located<T>
+{
+    pub data: T,
+    pub loc: Span
+}
+
+impl<T> Located<T>
+{
+    pub fn new(data:T, loc:Span) -> Self
+    {
+        Located { data, loc }
+    }
+}
+
+impl<T:Clone> Clone for Located<T>
+{
+    fn clone(&self) -> Self
+    {
+        Located::new(self.data.clone(), self.loc)
+    }
+}

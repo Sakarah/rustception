@@ -1,7 +1,7 @@
-use location::Span;
+use location::Located;
 
 pub type Ident = String;
-pub type LIdent = (Ident, Span);
+pub type LIdent = Located<Ident>;
 
 pub type Program = Vec<Decl>;
 
@@ -19,43 +19,52 @@ pub struct Fun // fn <Ident>(<Arg>,*) -> <Type> <Block>
     pub body: Block
 }
 
+#[derive(Clone)]
 pub struct Struct // struct <Ident> { (<Ident> : <Type>),* }
 {
     pub name: LIdent,
     pub fields: Vec<(LIdent, LType)>
 }
 
-pub type LType = (Type, Span);
+pub type LType = Located<Type>;
+
+#[derive(Clone)]
 pub enum Type
 {
     Void,                            // ()
     Basic(LIdent),                   // <Ident>
-    Parametrized(LIdent,Vec<LType>), // <Ident>'<'(<Type>),*'>'
+    Parametrized(LIdent,Box<LType>), // <Ident>'<'<Type>'>'
     Ref(Box<LType>),                 // &<Type>
     MutRef(Box<LType>)               // &mut <Type>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum Mut
 {
     Constant,   // ε
     Mutable     // mut
 }
-pub type Arg = (Mut, LIdent, LType); // <Mut> <Ident> : <Type>
+
+pub struct Arg // <Mut> <Ident> : <Type>
+{
+    pub m: Mut,
+    pub name: LIdent,
+    pub typ: LType
+}
 
 #[derive(Clone)]
 pub struct Block(pub Vec<LInstr>, pub LExpr); // { <Instr>* <Expr>? }
 
-pub type LInstr = (Instr, Span);
+pub type LInstr = Located<Instr>;
 #[derive(Clone)]
 pub enum Instr
 {
-    NoOp,                    // ;
+    NoOp,                     // ;
     Expression(LExpr),        // <Expr>;
     Let(Mut, LIdent, LExpr),  // let <Mut> <Ident> = <Expr>;
     While(LExpr, Box<Block>), // while <Expr> <Block>
     Return(LExpr),            // return <Expr>?;
-    If(IfExpr)               // <IfExpr>
+    If(IfExpr)                // <IfExpr>
 }
 
 #[derive(Clone)]
@@ -65,7 +74,7 @@ pub enum IfExpr
     Nested(LExpr, Box<Block>, Box<IfExpr>) // if <Expr> <Block> else <IfExpr>
 }
 
-pub type LExpr = (Expr, Span);
+pub type LExpr = Located<Expr>;
 #[derive(Clone)]
 pub enum Expr
 {
@@ -120,4 +129,5 @@ pub enum Comp
 }
 
 pub const EXPR_VOID : Expr = Expr::Constant(Const::Void);
-pub const LEXPR_VOID : LExpr = (EXPR_VOID, ::location::EMPTY_SPAN);
+pub const LEXPR_VOID : LExpr = 
+    Located { data:EXPR_VOID, loc: ::location::EMPTY_SPAN };
