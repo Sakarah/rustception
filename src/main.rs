@@ -2,6 +2,8 @@ mod location;
 mod lexer;
 mod ast;
 mod parser;
+mod typ_ast;
+mod typing;
 
 use std::fs::File;
 use lexer::Lexer;
@@ -29,8 +31,12 @@ fn main()
         println!("Unable to open file '{}': {}", &filename, err);
         exit(1); });
     let lexer = Lexer::from_channel(file);
-    let _ = parser::parse_Program(lexer).unwrap_or_else(|err| {
+    let ast = parser::parse_Program(lexer).unwrap_or_else(|err| {
         println!("Parsing error: {}", err);
         exit(1); });
     if parse_only { exit(0); }
+
+    let _ = typing::type_program(ast).unwrap_or_else(|err| {
+        println!("Type error: {:?}", err);
+        exit(1); });
 }

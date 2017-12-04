@@ -97,25 +97,29 @@ Field: (ast::LIdent, ast::LType) =
 Type: ast::Type =
 {
     "(" ")" => ast::Type::Void,
-    <id:Loc<Ident>> => ast::Type::Basic(id),
+    <id:Ident> =>
+    {
+        if &id == "i32" { ast::Type::Int32 }
+        else if &id == "bool" { ast::Type::Bool }
+        else { ast::Type::Basic(id) }
+    },
 
-    <id:Loc<Ident>> "<" <params:Loc<Type>> ">" =>
+    <id:Ident> "<" <params:Type> ">" =>
         ast::Type::Parametrized(id, Box::new(params)),
 
-    "&" <t:Loc<Type>> => ast::Type::Ref(Box::new(t)),
-    "&" "mut" <t:Loc<Type>> => ast::Type::MutRef(Box::new(t))
+    "&" <t:Type> => ast::Type::Ref(Box::new(t)),
+    "&" "mut" <t:Type> => ast::Type::MutRef(Box::new(t))
 };
 
 Arg: ast::Arg =
 {
     <m:Mut> <name:Loc<Ident>> ":" <typ:Loc<Type>> =>
-        ast::Arg { m, name, typ }
+        ast::Arg { mutable:m, name, typ }
 };
 
-Mut: ast::Mut =
+Mut: bool =
 {
-    <m:"mut"?> =>
-        if m.is_some() {ast::Mut::Mutable} else {ast::Mut::Constant}
+    <m:"mut"?> => m.is_some()
 };
 
 Block: ast::Block =
@@ -124,7 +128,7 @@ Block: ast::Block =
     {
         if let Some(e) = expr
         {
-            ast::Block(instr, e)
+            ast::Block { instr, expr:e }
         }
         else
         {
@@ -133,18 +137,18 @@ Block: ast::Block =
             {
                 if let ast::Instr::If(if_expr) = data
                 {
-                    ast::Block(instr,
-                        Located::new(ast::Expr::If(Box::new(if_expr)), loc))
+                    ast::Block { instr, expr:
+                        Located::new(ast::Expr::If(Box::new(if_expr)), loc)}
                 }
                 else
                 {
                     instr.push(Located::new(data, loc));
-                    ast::Block(instr, ast::LEXPR_VOID)
+                    ast::Block { instr, expr:ast::LEXPR_VOID }
                 }
             }
             else
             {
-                ast::Block(instr, ast::LEXPR_VOID)
+                ast::Block { instr, expr:ast::LEXPR_VOID }
             }
         }
     }
@@ -172,7 +176,7 @@ IfExpr: ast::IfExpr =
 {
     "if" <cond:Loc<Expr>> <block_true:Block> =>
     {
-        let empty_block = ast::Block(Vec::new(), ast::LEXPR_VOID);
+        let empty_block = ast::Block { instr:Vec::new(), expr:ast::LEXPR_VOID };
         ast::IfExpr::Single(cond, Box::new(block_true), Box::new(empty_block))
     },
     "if" <cond:Loc<Expr>> <block_true:Block> "else" <block_false:Block> =>
@@ -203,14 +207,14 @@ Expr: ast::Expr =
 OrExpr: ast::Expr =
 {
     <l:Loc<OrExpr>> "||" <r:Loc<AndExpr>> =>
-        ast::Expr::Or(Box::new(l),Box::new(r)),
+        ast::Expr::Logic(ast::LogicOp::Or, Box::new(l), Box::new(r)),
     <e:AndExpr> => e
 };
 
 AndExpr: ast::Expr =
 {
     <l:Loc<AndExpr>> "&&" <r:Loc<CmpExpr>> =>
-        ast::Expr::And(Box::new(l),Box::new(r)),
+        ast::Expr::Logic(ast::LogicOp::And, Box::new(l), Box::new(r)),
     <e:CmpExpr> => e
 };
 
@@ -234,20 +238,23 @@ Comparator: ast::Comp =
 Term: ast::Expr =
 {
     <l:Loc<Term>> "+" <r:Loc<Factor>> =>
-        ast::Expr::Addition(Box::new(l), Box::new(r)),
+        ast::Expr::Arithmetic(ast::ArithOp::Addition, Box::new(l), Box::new(r)),
     <l:Loc<Term>> "-" <r:Loc<Factor>> =>
-        ast::Expr::Substraction(Box::new(l), Box::new(r)),
+        ast::Expr::Arithmetic(ast::ArithOp::Substraction,
+                              Box::new(l), Box::new(r)),
     <e:Factor> => e
 };
 
 Factor: ast::Expr =
 {
     <l:Loc<Factor>> "*" <r:Loc<UnaryExpr>> =>
-        ast::Expr::Multiplication(Box::new(l), Box::new(r)),
+        ast::Expr::Arithmetic(ast::ArithOp::Multiplication,
+                              Box::new(l), Box::new(r)),
     <l:Loc<Factor>> "/" <r:Loc<UnaryExpr>> =>
-        ast::Expr::Division(Box::new(l), Box::new(r)),
+        ast::Expr::Arithmetic(ast::ArithOp::Division, Box::new(l), Box::new(r)),
     <l:Loc<Factor>> "%" <r:Loc<UnaryExpr>> =>
-        ast::Expr::Remainder(Box::new(l), Box::new(r)),
+        ast::Expr::Arithmetic(ast::ArithOp::Remainder,
+                              Box::new(l), Box::new(r)),
     <e:UnaryExpr> => e
 };
 

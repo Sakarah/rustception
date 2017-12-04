@@ -37,7 +37,7 @@ impl fmt::Display for Location
 //   ___) | |_) | (_| | | | |
 //  |____/| .__/ \__,_|_| |_|
 //        |_|
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct Span
 {
     pub start: Location,
@@ -86,12 +86,13 @@ impl fmt::Display for Span
     }
 }
 
-//   _                    _           _  _________  
-//  | |    ___   ___ __ _| |_ ___  __| |/ /_   _\ \ 
+//   _                    _           _  _________
+//  | |    ___   ___ __ _| |_ ___  __| |/ /_   _\ \
 //  | |   / _ \ / __/ _` | __/ _ \/ _` / /  | |  \ \
 //  | |__| (_) | (_| (_| | ||  __/ (_| \ \  | |  / /
-//  |_____\___/ \___\__,_|\__\___|\__,_|\_\ |_| /_/ 
-//                                                  
+//  |_____\___/ \___\__,_|\__\___|\__,_|\_\ |_| /_/
+//
+#[derive(Debug)]
 pub struct Located<T>
 {
     pub data: T,
