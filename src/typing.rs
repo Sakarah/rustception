@@ -23,6 +23,8 @@ pub enum TypingError
     BorrowOnRvalue,
     MutBorrowOnConstant,
     VariableUnbound(ast::Ident),
+    UnknownFunction(ast::Ident),
+    WrongNumberOfArguments(usize, usize),
 }
 
 type Result<T> = ::std::result::Result<T,Located<TypingError>>;
@@ -391,7 +393,6 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             Ok(typ_ast::Typed { mutable: false, lvalue: false, loc: e.loc,
                 typ: ast::Type::MutRef(Box::new(t0.typ.clone())),
                 data: typ_ast::Expr::MutRef(Box::new(t0)) })
-
         }
         ast::Expr::Constant(ref val) =>
         {
@@ -426,6 +427,31 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             Ok(typ_ast::Typed { mutable: false, lvalue: false, loc: e.loc,
                 typ: typ_block.expr.typ.clone(),
                 data: typ_ast::Expr::NestedBlock(Box::new(typ_block)) })
+        }
+        ast::Expr::FunctionCall(ref fun_name, ref args) =>
+        {
+            let fun_sig = ctx.global.funs.get(&fun_name.data)
+                .ok_or(Located::new(TypingError::UnknownFunction(
+                    fun_name.data.clone()), fun_name.loc))?;
+
+            if fun_sig.arguments.len() != args.len()
+            {
+                return Err(Located::new(TypingError::WrongNumberOfArguments(
+                    fun_sig.arguments.len(), args.len()), e.loc));
+            }
+
+            let mut typ_args = Vec::new();
+            for (param, arg) in fun_sig.arguments.iter().zip(args)
+            {
+                let arg_typ = type_expr(arg, ctx)?;
+                check_type(&param.typ.data, &arg_typ.typ, arg_typ.loc)?;
+
+                typ_args.push(arg_typ);
+            }
+
+            Ok(typ_ast::Typed { typ: fun_sig.return_type.data.clone(),
+                data: typ_ast::Expr::FunctionCall(fun_name.clone(), typ_args),
+                mutable: false, lvalue: false, loc: e.loc })
         }
         _ => unimplemented!()
     }
