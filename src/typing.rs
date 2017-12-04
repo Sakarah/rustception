@@ -247,7 +247,7 @@ fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
                 let typ_e = type_expr(e, &lctx)?;
                 typ_instr.push(Located::new(typ_ast::Instr::Expression(typ_e),
                                             instr.loc));
-            },
+            }
             ast::Instr::Let(ref m, ref ident, ref expr) =>
             {
                 let typ_expr = type_expr(expr, &lctx)?;
@@ -255,7 +255,23 @@ fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
                 lctx.vars.insert(ident.data.clone(), var_typ);
                 typ_instr.push(Located::new(
                     typ_ast::Instr::Let(ident.clone(), typ_expr), instr.loc));
-            },
+            }
+            ast::Instr::While(ref cond, ref body) =>
+            {
+                let typ_cond = type_expr(cond, &lctx)?;
+                check_type(&ast::Type::Bool, &typ_cond.typ, typ_cond.loc)?;
+
+                let typ_body = type_block(body, &lctx)?;
+                typ_instr.push(Located::new(
+                    typ_ast::Instr::While(typ_cond, Box::new(typ_body)),
+                    instr.loc));
+            }
+            ast::Instr::If(ref if_expr) =>
+            {
+                let typ_e = type_ifexpr(if_expr, instr.loc, &lctx)?;
+                typ_instr.push(Located::new(typ_ast::Instr::Expression(typ_e),
+                                            instr.loc));
+            }
             _ => unimplemented!()
         }
     }
@@ -421,13 +437,6 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             Ok(typ_ast::Typed { typ, mutable, loc: e.loc, lvalue: true,
                 data: typ_ast::Expr::Variable(id.clone()) })
         }
-        ast::Expr::NestedBlock(ref block) =>
-        {
-            let typ_block = type_block(block, ctx)?;
-            Ok(typ_ast::Typed { mutable: false, lvalue: false, loc: e.loc,
-                typ: typ_block.expr.typ.clone(),
-                data: typ_ast::Expr::NestedBlock(Box::new(typ_block)) })
-        }
         ast::Expr::FunctionCall(ref fun_name, ref args) =>
         {
             let fun_sig = ctx.global.funs.get(&fun_name.data)
@@ -453,7 +462,52 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                 data: typ_ast::Expr::FunctionCall(fun_name.clone(), typ_args),
                 mutable: false, lvalue: false, loc: e.loc })
         }
+        ast::Expr::If(ref if_expr) => type_ifexpr(if_expr, e.loc, ctx),
+        ast::Expr::NestedBlock(ref block) =>
+        {
+            let typ_block = type_block(block, ctx)?;
+            Ok(typ_ast::Typed { mutable: false, lvalue: false, loc: e.loc,
+                typ: typ_block.expr.typ.clone(),
+                data: typ_ast::Expr::NestedBlock(Box::new(typ_block)) })
+        }
         _ => unimplemented!()
+    }
+}
+
+fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
+    -> Result<typ_ast::TExpr>
+{
+    match *e
+    {
+        ast::IfExpr::Single(ref cond, ref b_if, ref b_else) =>
+        {
+            let typ_cond = type_expr(cond, ctx)?;
+            check_type(&ast::Type::Bool, &typ_cond.typ, typ_cond.loc)?;
+
+            let typ_if = type_block(b_if, ctx)?;
+            let typ_else = type_block(b_else, ctx)?;
+            check_type(&typ_if.expr.typ, &typ_else.expr.typ,
+                       typ_else.expr.loc)?;
+
+            Ok(typ_ast::Typed { typ: typ_if.expr.typ.clone(), mutable: false,
+                data: typ_ast::Expr::If(Box::new(typ_cond), Box::new(typ_if),
+                    Box::new(typ_else)), lvalue: false, loc })
+        }
+        ast::IfExpr::Nested(ref cond, ref b_if, ref ifexpr_else) =>
+        {
+            let typ_cond = type_expr(cond, ctx)?;
+            check_type(&ast::Type::Bool, &typ_cond.typ, typ_cond.loc)?;
+
+            let typ_if = type_block(b_if, ctx)?;
+            let typ_else = type_ifexpr(ifexpr_else, loc, ctx)?;
+            check_type(&typ_if.expr.typ, &typ_else.typ, typ_if.expr.loc)?;
+
+            let block_else = typ_ast::Block{ instr:Vec::new(), expr:typ_else };
+            Ok(typ_ast::Typed { typ: typ_if.expr.typ.clone(), mutable: false,
+                data: typ_ast::Expr::If(Box::new(typ_cond), Box::new(typ_if),
+                    Box::new(block_else)), lvalue: false, loc })
+
+        }
     }
 }
 

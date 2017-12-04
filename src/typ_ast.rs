@@ -48,14 +48,7 @@ pub enum Instr
     Expression(TExpr),
     Let(LIdent, TExpr),
     While(TExpr, Box<Block>),
-    Return(TExpr),
-    If(IfExpr)
-}
-
-pub enum IfExpr
-{
-    Single(TExpr, Box<Block>, Box<Block>),
-    Nested(TExpr, Box<Block>, Box<IfExpr>)
+    Return(TExpr)
 }
 
 pub type TExpr = Typed<Expr>;
@@ -83,7 +76,7 @@ pub enum Expr
     StructConstr(LIdent, Vec<(LIdent, TExpr)>),
     ListMacro(LIdent,Vec<TExpr>),
     StringMacro(LIdent,String),
-    If(Box<IfExpr>),
+    If(Box<TExpr>, Box<Block>, Box<Block>),
     NestedBlock(Box<Block>)
 }
 
