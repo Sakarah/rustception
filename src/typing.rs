@@ -25,6 +25,7 @@ pub enum TypingError
     VariableUnbound(ast::Ident),
     UnknownFunction(ast::Ident),
     WrongNumberOfArguments(usize, usize),
+    UnknownMacro(ast::Ident),
 }
 
 type Result<T> = ::std::result::Result<T,Located<TypingError>>;
@@ -461,6 +462,18 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             Ok(typ_ast::Typed { typ: fun_sig.return_type.data.clone(),
                 data: typ_ast::Expr::FunctionCall(fun_name.clone(), typ_args),
                 mutable: false, lvalue: false, loc: e.loc })
+        }
+        ast::Expr::StringMacro(ref macro_name, ref string) =>
+        {
+            match macro_name.data.as_ref()
+            {
+                "print" =>
+                    Ok(typ_ast::Typed { typ: ast::Type::Void, mutable:false,
+                        data: typ_ast::Expr::Print(string.clone()),
+                        lvalue: false, loc: e.loc }),
+                _ => Err(Located::new(TypingError::UnknownMacro(
+                    macro_name.data.clone()), macro_name.loc))
+            }
         }
         ast::Expr::If(ref if_expr) => type_ifexpr(if_expr, e.loc, ctx),
         ast::Expr::NestedBlock(ref block) =>

@@ -74,8 +74,8 @@ pub enum Expr
     Variable(LIdent),
     FunctionCall(LIdent, Vec<TExpr>),
     StructConstr(LIdent, Vec<(LIdent, TExpr)>),
-    ListMacro(LIdent,Vec<TExpr>),
-    StringMacro(LIdent,String),
+    VecConstr(Vec<TExpr>),
+    Print(String),
     If(Box<TExpr>, Box<Block>, Box<Block>),
     NestedBlock(Box<Block>)
 }
