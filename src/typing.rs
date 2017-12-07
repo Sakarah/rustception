@@ -2,7 +2,7 @@ use ast;
 use ast::Type;
 use typ_ast;
 use location::{Located, Span};
-use std::collections::HashMap;
+use std::collections::{HashMap,HashSet};
 
 /**
  * Errors that can occur during typing.
@@ -12,6 +12,7 @@ pub enum TypingError
 {
     MultipleFuncDecl(ast::Ident),
     MultipleStructDecl(ast::Ident),
+    MultipleFieldDecl(ast::Ident),
     UnknownType(ast::Ident),
     UnknownParametrizedType(ast::Ident),
     MismatchedTypes(ast::Type, ast::Type),
@@ -26,6 +27,13 @@ pub enum TypingError
     UnknownFunction(ast::Ident),
     WrongNumberOfArguments(usize, usize),
     UnknownMacro(ast::Ident),
+    InfiniteRecursiveStruct(ast::Ident),
+    BorrowedInsideStruct(ast::Ident, ast::Type),
+    InvalidFieldName(ast::Ident, ast::Ident),
+    MultipleFieldInit(ast::Ident),
+    LackingField(ast::Ident, ast::Ident),
+    FieldAccessOnNonStruct(ast::Type),
+    UnknownStruct(ast::Ident)
 }
 
 type Result<T> = ::std::result::Result<T,Located<TypingError>>;
@@ -74,7 +82,21 @@ pub fn type_program(prgm: ast::Program) -> Result<typ_ast::Program>
             },
             ast::Decl::Structure(s) =>
             {
-                let struc = typ_ast::Struct { fields: s.fields };
+                let mut fields = HashMap::new();
+                for f in s.fields
+                {
+                    match fields.insert(f.name.data.clone(), f.typ)
+                    {
+                        None => (),
+                        Some(_) =>
+                        {
+                            return Err(Located::new(
+                                TypingError::MultipleFieldDecl(f.name.data),
+                                f.name.loc));
+                        }
+                    }
+                }
+                let struc = typ_ast::Struct { fields };
                 match ctx.structs.insert(s.name.data.clone(), struc)
                 {
                     None => (),
@@ -90,9 +112,11 @@ pub fn type_program(prgm: ast::Program) -> Result<typ_ast::Program>
     }
 
     // Then we check if all structs are meaningful
-    for (name, s) in &ctx.structs
+    let mut checked_structs = HashMap::new();
+    for s_name in ctx.structs.keys()
     {
-        check_struct(name, s, &ctx)?;
+        check_struct(s_name, &mut checked_structs,
+                     ::location::EMPTY_SPAN, &ctx)?;
     }
 
     // Finally we type all function bodies.
@@ -118,9 +142,9 @@ fn check_well_formed(typ: &ast::Type, loc: Span, ctx: &GlobalContext)
     {
         ast::Type::Void | ast::Type::Int32 | ast::Type::Bool =>
             Ok(()),
-        ast::Type::Basic(ref id) if ctx.structs.contains_key(id) =>
+        ast::Type::Struct(ref id) if ctx.structs.contains_key(id) =>
              Ok(()),
-        ast::Type::Basic(ref id) =>
+        ast::Type::Struct(ref id) =>
             Err(Located::new(TypingError::UnknownType(id.clone()), loc)),
         ast::Type::Parametrized(ref id, ref typ) if id == "Vec" =>
             check_well_formed(typ, loc, ctx),
@@ -142,7 +166,7 @@ fn is_borrowed(typ: &ast::Type) -> bool
     match *typ
     {
         ast::Type::Void | ast::Type::Int32 | ast::Type::Bool |
-        ast::Type::Basic(_) | ast::Type::Parametrized(_,_) =>
+        ast::Type::Struct(_) | ast::Type::Parametrized(_,_) =>
             false,
         ast::Type::Ref(_) | ast::Type::MutRef(_) =>
             true
@@ -160,7 +184,7 @@ fn check_type(expected: &ast::Type, found: &ast::Type, loc: Span) -> Result<()>
         (&ast::Type::Void, &ast::Type::Void) => Ok(()),
         (&ast::Type::Int32, &ast::Type::Int32) => Ok(()),
         (&ast::Type::Bool, &ast::Type::Bool) => Ok(()),
-        (&ast::Type::Basic(ref id_e), &ast::Type::Basic(ref id_f))
+        (&ast::Type::Struct(ref id_e), &ast::Type::Struct(ref id_f))
             if id_e == id_f =>
             Ok(()),
         (&ast::Type::Parametrized(ref id_e, ref typ_e),
@@ -411,6 +435,34 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                 typ: ast::Type::MutRef(Box::new(t0.typ.clone())),
                 data: typ_ast::Expr::MutRef(Box::new(t0)) })
         }
+        ast::Expr::Attribute(ref e0, ref attr_name) =>
+        {
+            let t0 = type_expr(e0, ctx)?;
+
+            let typ = match t0.typ
+            {
+                ast::Type::Struct(ref struct_name) =>
+                {
+                    let struc = &ctx.global.structs.get(struct_name).unwrap();
+                    // Safe to unwrap here as type_expr should only  ^^^^^^^^
+                    // return valid types.
+
+                    match struc.fields.get(&attr_name.data)
+                    {
+                        None => Err(Located::new(TypingError::InvalidFieldName(
+                            attr_name.data.clone(), struct_name.clone()),
+                            attr_name.loc)),
+                        Some(ref field_typ) => Ok(field_typ.data.clone())
+                    }
+                }
+                _ => Err(Located::new(TypingError::FieldAccessOnNonStruct(
+                    t0.typ.clone()), e.loc))
+            }?;
+
+            Ok(typ_ast::Typed { mutable: t0.mutable, lvalue: t0.lvalue, typ,
+                data: typ_ast::Expr::Attribute(Box::new(t0), attr_name.clone()),
+                loc: e.loc })
+        }
         ast::Expr::Constant(ref val) =>
         {
             let typ = match *val
@@ -463,12 +515,67 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                 data: typ_ast::Expr::FunctionCall(fun_name.clone(), typ_args),
                 mutable: false, lvalue: false, loc: e.loc })
         }
+        ast::Expr::StructConstr(ref struct_name, ref fields) =>
+        {
+            match ctx.global.structs.get(&struct_name.data)
+            {
+                None => return Err(Located::new(TypingError::UnknownStruct(
+                    struct_name.data.clone()), struct_name.loc)),
+                Some(ref struc) =>
+                {
+                    // Type all the fields given and check if their type match
+                    // with the struct
+                    let mut found_fields = HashSet::new();
+                    let mut field_expr = Vec::new();
+                    for &(ref name, ref expr) in fields
+                    {
+                        let t_expr = type_expr(expr, ctx)?;
+
+                        match struc.fields.get(&name.data)
+                        {
+                            None => return Err(Located::new(
+                                TypingError::InvalidFieldName(name.data.clone(),
+                                struct_name.data.clone()), name.loc)),
+                            Some(ref typ) =>
+                            {
+                                check_type(&typ.data, &t_expr.typ, t_expr.loc)?;
+
+                                if !found_fields.insert(name.data.clone())
+                                {
+                                    return Err(Located::new(
+                                        TypingError::MultipleFieldInit(
+                                        name.data.clone()), name.loc));
+                                }
+
+                                field_expr.push((name.clone(), t_expr));
+                            }
+                        }
+                    }
+
+                    // Check that all fields of the struct are initialized
+                    for name in struc.fields.keys()
+                    {
+                        if !found_fields.contains(name)
+                        {
+                            return Err(Located::new(TypingError::LackingField(
+                                name.clone(), struct_name.data.clone()),
+                                e.loc));
+                        }
+                    }
+
+                    Ok(typ_ast::Typed { mutable: false, lvalue: false,
+                        typ: ast::Type::Struct(struct_name.data.clone()),
+                        data: typ_ast::Expr::StructConstr(struct_name.clone(),
+                        field_expr), loc: e.loc })
+                }
+            }
+        }
         ast::Expr::StringMacro(ref macro_name, ref string) =>
         {
             match macro_name.data.as_ref()
             {
                 "print" =>
-                    Ok(typ_ast::Typed { typ: ast::Type::Void, mutable:false,
+                    Ok(typ_ast::Typed { typ: ast::Type::Void, mutable: false,
                         data: typ_ast::Expr::Print(string.clone()),
                         lvalue: false, loc: e.loc }),
                 _ => Err(Located::new(TypingError::UnknownMacro(
@@ -519,7 +626,6 @@ fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
             Ok(typ_ast::Typed { typ: typ_if.expr.typ.clone(), mutable: false,
                 data: typ_ast::Expr::If(Box::new(typ_cond), Box::new(typ_if),
                     Box::new(block_else)), lvalue: false, loc })
-
         }
     }
 }
@@ -527,9 +633,39 @@ fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
 /**
  * Check if the struct with the given name and fields is well formed.
  */
-fn check_struct(name: &str, s: &typ_ast::Struct, ctx:&GlobalContext)
-    -> Result<()>
+fn check_struct(name: &String, checked: &mut HashMap<String, bool>,
+                loc:Span, ctx:&GlobalContext) -> Result<()>
 {
-    unimplemented!()
+    let s = ctx.structs.get(name).unwrap();
+    match checked.get(name)
+    {
+        Some(&true) => Ok(()),
+        Some(&false) => Err(Located::new(TypingError::InfiniteRecursiveStruct(
+            name.clone()), loc)),
+        None =>
+        {
+            checked.insert(name.clone(), false);
+            for (field_name, field_typ) in &s.fields
+            {
+                check_well_formed(&field_typ.data, field_typ.loc, ctx)?;
+                match field_typ.data
+                {
+                    ast::Type::Void | ast::Type::Bool | ast::Type::Int32 |
+                    ast::Type::Parametrized(_, _) => (),
+                    ast::Type::Struct(ref name) =>
+                        check_struct(name, checked, field_typ.loc, ctx)?,
+                    ast::Type::Ref(_) | ast::Type::MutRef(_) =>
+                    {
+                        return Err(Located::new(
+                            TypingError::BorrowedInsideStruct(
+                                field_name.clone(),field_typ.data.clone()),
+                            field_typ.loc));
+                    }
+                }
+            }
+            checked.insert(name.clone(), true);
+            Ok(())
+        }
+    }
 }
 

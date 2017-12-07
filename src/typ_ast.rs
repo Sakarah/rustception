@@ -22,7 +22,7 @@ pub struct Program
 pub struct FunSignature
 {
     pub arguments: Vec<ast::Arg>,
-    pub return_type: ast::LType
+    pub return_type: LType
 }
 
 pub struct Fun
@@ -33,7 +33,7 @@ pub struct Fun
 
 pub struct Struct
 {
-    pub fields: Vec<(LIdent, LType)>
+    pub fields: HashMap<Ident, LType>
 }
 
 pub struct Block

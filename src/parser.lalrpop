@@ -89,9 +89,9 @@ Struct: ast::Struct =
         ast::Struct{name, fields}
 };
 
-Field: (ast::LIdent, ast::LType) =
+Field: ast::Field =
 {
-    <id:Loc<Ident>> ":" <typ:Loc<Type>> => (id, typ)
+    <name:Loc<Ident>> ":" <typ:Loc<Type>> => ast::Field { name, typ }
 };
 
 Type: ast::Type =
@@ -101,7 +101,7 @@ Type: ast::Type =
     {
         if &id == "i32" { ast::Type::Int32 }
         else if &id == "bool" { ast::Type::Bool }
-        else { ast::Type::Basic(id) }
+        else { ast::Type::Struct(id) }
     },
 
     <id:Ident> "<" <params:Type> ">" =>

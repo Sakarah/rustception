@@ -22,7 +22,13 @@ pub struct Fun // fn <Ident>(<Arg>,*) -> <Type> <Block>
 pub struct Struct // struct <Ident> { (<Ident> : <Type>),* }
 {
     pub name: LIdent,
-    pub fields: Vec<(LIdent, LType)>
+    pub fields: Vec<Field>
+}
+
+pub struct Field
+{
+    pub name: LIdent,
+    pub typ: LType
 }
 
 pub type LType = Located<Type>;
@@ -32,7 +38,7 @@ pub enum Type
     Void,                            // ()
     Int32,                           // i32
     Bool,                            // bool
-    Basic(Ident),                    // <Ident>
+    Struct(Ident),                   // <Ident>
     Parametrized(Ident, Box<Type>),  // <Ident>'<'<Type>'>'
     Ref(Box<Type>),                  // &<Type>
     MutRef(Box<Type>)                // &mut <Type>
