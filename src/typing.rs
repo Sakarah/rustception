@@ -557,7 +557,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             let typ_index = type_expr(index, ctx)?;
             check_type(&typ_ast::Type::Int32, &typ_index.typ, typ_index.loc)?;
 
-            let typ_array = type_expr(array, ctx)?;
+            let typ_array = auto_deref(type_expr(array, ctx)?);
             if !typ_array.lvalue
             {
                 return Err(Located::new(TypingError::ArrayAccessOnRvalue,
@@ -580,7 +580,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
         }
         ast::Expr::Attribute(ref e0, ref attr_name) =>
         {
-            let t0 = type_expr(e0, ctx)?;
+            let t0 = auto_deref(type_expr(e0, ctx)?);
 
             let typ = match t0.typ
             {
@@ -610,7 +610,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
         }
         ast::Expr::MethodCall(ref obj, ref method_name, ref args) =>
         {
-            let typ_obj = type_expr(obj, ctx)?;
+            let typ_obj = auto_deref(type_expr(obj, ctx)?);
             match typ_obj.typ
             {
                 typ_ast::Type::Vector(_) =>
@@ -806,6 +806,24 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                 data: typ_ast::Expr::NestedBlock(Box::new(typ_block)) })
         }
     }
+}
+
+fn auto_deref(e: typ_ast::TExpr) -> typ_ast::TExpr
+{
+    let typ_opt = match &e.typ
+    {
+        &typ_ast::Type::Ref(ref t) => Some((simplify_type(t), false)),
+        &typ_ast::Type::MutRef(ref t) => Some((simplify_type(t), true)),
+        _ => None
+    };
+
+    if let Some((typ, mutable)) = typ_opt
+    {
+        typ_ast::Typed { typ, mutable, lvalue: true, loc: e.loc,
+            always_return: e.always_return,
+            data: typ_ast::Expr::Deref(Box::new(e)) }
+    }
+    else { e }
 }
 
 fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
