@@ -36,7 +36,8 @@ pub enum TypingError
     FieldAccessOnNonStruct(typ_ast::Type),
     UnknownStruct(ast::Ident),
     ArrayAccessOnRvalue,
-    ArrayAccessOnScalarType(typ_ast::Type)
+    ArrayAccessOnScalarType(typ_ast::Type),
+    UnknownMethod(ast::Ident, typ_ast::Type)
 }
 
 type Result<T> = ::std::result::Result<T,Located<TypingError>>;
@@ -607,7 +608,39 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                 data: typ_ast::Expr::Attribute(Box::new(t0), attr_name.clone())
                 })
         }
-        ast::Expr::MethodCall(_, _, _) => unimplemented!(),
+        ast::Expr::MethodCall(ref obj, ref method_name, ref args) =>
+        {
+            let typ_obj = type_expr(obj, ctx)?;
+            match typ_obj.typ
+            {
+                typ_ast::Type::Vector(_) =>
+                {
+                    match method_name.data.as_ref()
+                    {
+                        "len" =>
+                        {
+                            if args.len() != 0
+                            {
+                                return Err(Located::new(
+                                    TypingError::WrongNumberOfArguments(0,
+                                    args.len()), e.loc));
+                            }
+
+                            Ok(typ_ast::Typed { mutable: false, lvalue: false,
+                                typ: typ_ast::Type::Int32, loc: e.loc,
+                                data: typ_ast::Expr::VecLen(Box::new(typ_obj)),
+                                always_return: false })
+                        }
+                        _ => Err(Located::new(TypingError::UnknownMethod(
+                            method_name.data.clone(), typ_obj.typ.clone()),
+                            method_name.loc))
+                    }
+                }
+                _ => Err(Located::new(TypingError::UnknownMethod(
+                    method_name.data.clone(), typ_obj.typ.clone()),
+                    method_name.loc))
+            }
+        }
         ast::Expr::Constant(ref val) =>
         {
             let typ = match *val

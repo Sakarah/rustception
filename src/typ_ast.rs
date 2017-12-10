@@ -94,13 +94,13 @@ pub enum Expr
 
     ArrayAccess(Box<TExpr>, Box<TExpr>),
     Attribute(Box<TExpr>, LIdent),
-    MethodCall(Box<TExpr>, LIdent, Vec<TExpr>),
 
     Constant(ast::Const),
     Variable(LIdent),
     FunctionCall(LIdent, Vec<TExpr>),
     StructConstr(LIdent, Vec<(LIdent, TExpr)>),
     VecConstr(Vec<TExpr>),
+    VecLen(Box<TExpr>),
     Print(String),
     If(Box<TExpr>, Box<Block>, Box<Block>),
     NestedBlock(Box<Block>)
