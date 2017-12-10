@@ -2,6 +2,8 @@ use location::{Span,Located};
 use ast;
 use ast::{Ident,LIdent};
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub struct Typed<T>
 {
@@ -9,6 +11,7 @@ pub struct Typed<T>
     pub typ: Type,
     pub mutable: bool,
     pub lvalue: bool,
+    pub always_return: bool,
     pub loc: Span
 }
 
@@ -47,7 +50,8 @@ pub enum Type
     Struct(Ident),
     Vector(Box<Type>),
     Ref(Box<Type>),
-    MutRef(Box<Type>)
+    MutRef(Box<Type>),
+    Unknown(Rc<RefCell<Option<Type>>>) // Types that will be discovered later
 }
 
 #[derive(Clone)]

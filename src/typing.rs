@@ -2,6 +2,8 @@ use ast;
 use typ_ast;
 use location::{Located, Span};
 use std::collections::{HashMap,HashSet};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 /**
  * Errors that can occur during typing.
@@ -166,7 +168,8 @@ fn is_borrowed(typ: &typ_ast::Type) -> bool
     match *typ
     {
         typ_ast::Type::Void | typ_ast::Type::Int32 | typ_ast::Type::Bool |
-        typ_ast::Type::Struct(_) | typ_ast::Type::Vector(_) =>
+        typ_ast::Type::Struct(_) | typ_ast::Type::Vector(_) |
+        typ_ast::Type::Unknown(_) =>
             false,
         typ_ast::Type::Ref(_) | typ_ast::Type::MutRef(_) =>
             true
@@ -196,6 +199,29 @@ fn check_type(expected: &typ_ast::Type, found: &typ_ast::Type, loc: Span)
             check_type(typ_e, typ_f, loc),
         (&typ_ast::Type::Ref(ref typ_e), &typ_ast::Type::MutRef(ref typ_f)) =>
             check_type(typ_e, typ_f, loc),
+        (&typ_ast::Type::Unknown(ref e_cell), _) =>
+        {
+            let mut e = e_cell.borrow_mut();
+            if let Some(ref typ_e) = *e
+            {
+                return check_type(typ_e, found, loc);
+            }
+
+            // Unification with the other type
+            *e = Some(found.clone());
+            Ok(())
+        }
+        (_, &typ_ast::Type::Unknown(ref f_cell)) =>
+        {
+            let mut f = f_cell.borrow_mut();
+            if let Some(ref typ_f) = *f
+            {
+                return check_type(expected, typ_f, loc);
+            }
+
+            *f = Some(expected.clone());
+            Ok(())
+        }
         _ => Err(Located::new(TypingError::MismatchedTypes(expected.clone(),
             found.clone()), loc))
     }
@@ -236,7 +262,8 @@ pub struct FullType
 struct LocalContext<'a>
 {
     vars: HashMap<String, FullType>,
-    global: &'a GlobalContext
+    global: &'a GlobalContext,
+    return_type: &'a typ_ast::Type
 }
 
 /**
@@ -256,7 +283,8 @@ fn type_function(f_name: &str, f_body: ast::Block, ctx:&GlobalContext)
     }
 
     // Check arguments
-    let mut lctx = LocalContext { vars:HashMap::new(), global:ctx };
+    let mut lctx = LocalContext { vars:HashMap::new(), global:ctx,
+        return_type: &f_sig.return_type.data };
     for arg in &f_sig.arguments
     {
         let arg_typ = FullType { mutable: arg.mutable,
@@ -277,27 +305,33 @@ fn type_function(f_name: &str, f_body: ast::Block, ctx:&GlobalContext)
     check_type(&f_sig.return_type.data, &typ_body.expr.typ,
                typ_body.expr.loc)?;
 
-    Ok(typ_ast::Fun { sig:f_sig.clone(), body: typ_body })
+    Ok(typ_ast::Fun { sig: f_sig.clone(), body: typ_body })
 }
 
 fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
 {
     let mut lctx = ctx.clone();
     let mut typ_instr = Vec::new();
+    let mut always_return = false;
 
     for instr in &b.instr
     {
         match instr.data
         {
+            ast::Instr::NoOp => (),
             ast::Instr::Expression(ref e) =>
             {
                 let typ_e = type_expr(e, &lctx)?;
+                always_return |= typ_e.always_return;
+
                 typ_instr.push(Located::new(typ_ast::Instr::Expression(typ_e),
                                             instr.loc));
             }
             ast::Instr::Let(ref m, ref ident, ref expr) =>
             {
                 let typ_expr = type_expr(expr, &lctx)?;
+                always_return |= typ_expr.always_return;
+
                 let var_typ = FullType{ mutable:*m, typ:typ_expr.typ.clone() };
                 lctx.vars.insert(ident.data.clone(), var_typ);
                 typ_instr.push(Located::new(
@@ -313,17 +347,42 @@ fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
                     typ_ast::Instr::While(typ_cond, Box::new(typ_body)),
                     instr.loc));
             }
+            ast::Instr::Return(ref e) =>
+            {
+                let typ_e = type_expr(e, &lctx)?;
+                check_type(lctx.return_type, &typ_e.typ, instr.loc)?;
+                always_return = true;
+
+                typ_instr.push(Located::new(typ_ast::Instr::Return(typ_e),
+                                            instr.loc));
+            }
             ast::Instr::If(ref if_expr) =>
             {
                 let typ_e = type_ifexpr(if_expr, instr.loc, &lctx)?;
+                always_return |= typ_e.always_return;
+
                 typ_instr.push(Located::new(typ_ast::Instr::Expression(typ_e),
                                             instr.loc));
             }
-            _ => unimplemented!()
         }
     }
 
     let typ_expr = type_expr(&b.expr, &lctx)?;
+
+    if always_return
+    {
+        if let &typ_ast::Type::Void = &typ_expr.typ
+        {
+            let expr = typ_ast::Typed { always_return: true,
+                typ: typ_ast::Type::Unknown(Rc::new(RefCell::new(None))),
+                ..typ_expr };
+            return Ok(typ_ast::Block { instr:typ_instr, expr });
+        }
+
+        let expr = typ_ast::Typed { always_return: true, ..typ_expr };
+        return Ok(typ_ast::Block { instr:typ_instr, expr });
+    }
+
     Ok(typ_ast::Block { instr:typ_instr, expr:typ_expr })
 }
 
@@ -348,10 +407,11 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             let t_val = type_expr(val, ctx)?;
             check_type(&t_var.typ, &t_val.typ, e.loc)?;
 
-            Ok(typ_ast::Typed { typ: typ_ast::Type::Void, mutable: false, data:
-                typ_ast::Expr::Assignment(Box::new(t_var), Box::new(t_val)),
-                lvalue: false, loc: e.loc })
-
+            Ok(typ_ast::Typed { typ: typ_ast::Type::Void, mutable: false,
+                lvalue: false, loc: e.loc,
+                always_return: t_var.always_return || t_val.always_return, data:
+                typ_ast::Expr::Assignment(Box::new(t_var), Box::new(t_val))
+            })
         }
         ast::Expr::Logic(ref op, ref e1, ref e2) =>
         {
@@ -362,8 +422,9 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             check_type(&typ_ast::Type::Bool, &t2.typ, t2.loc)?;
 
             Ok(typ_ast::Typed { typ: typ_ast::Type::Bool, mutable: false,
-                data: typ_ast::Expr::Logic(*op, Box::new(t1), Box::new(t2)),
-                lvalue: false, loc: e.loc })
+                lvalue: false, loc: e.loc,
+                always_return: t1.always_return || t2.always_return,
+                data: typ_ast::Expr::Logic(*op, Box::new(t1), Box::new(t2)) })
         }
         ast::Expr::Comparison(ref op, ref e1, ref e2) =>
         {
@@ -373,10 +434,10 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             let t2 = type_expr(e2, ctx)?;
             check_type(&typ_ast::Type::Int32, &t2.typ, t2.loc)?;
 
-            Ok(typ_ast::Typed { typ: typ_ast::Type::Bool, mutable: false, data:
-                typ_ast::Expr::Comparison(*op, Box::new(t1), Box::new(t2)),
-                lvalue: false, loc: e.loc })
-
+            Ok(typ_ast::Typed { typ: typ_ast::Type::Bool, mutable: false,
+                lvalue: false, loc: e.loc,
+                always_return: t1.always_return || t2.always_return, data:
+                typ_ast::Expr::Comparison(*op, Box::new(t1), Box::new(t2)) })
         }
         ast::Expr::Arithmetic(ref op, ref e1, ref e2) =>
         {
@@ -386,10 +447,11 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             let t2 = type_expr(e2, ctx)?;
             check_type(&typ_ast::Type::Int32, &t2.typ, t2.loc)?;
 
-            Ok(typ_ast::Typed { typ: typ_ast::Type::Int32, mutable: false, data:
+            Ok(typ_ast::Typed { typ: typ_ast::Type::Int32, mutable: false,
+                lvalue: false, loc: e.loc,
+                always_return: t1.always_return || t2.always_return, data:
                 typ_ast::Expr::Arithmetic(*op, Box::new(t1), Box::new(t2)),
-                lvalue: false, loc: e.loc })
-
+            })
         }
         ast::Expr::Minus(ref e0) =>
         {
@@ -397,9 +459,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             check_type(&typ_ast::Type::Int32, &t0.typ, t0.loc)?;
 
             Ok(typ_ast::Typed { typ: typ_ast::Type::Int32, mutable: false,
-                data: typ_ast::Expr::Minus(Box::new(t0)),
-                lvalue: false, loc: e.loc })
-
+                always_return: t0.always_return, lvalue: false, loc: e.loc,
+                data: typ_ast::Expr::Minus(Box::new(t0))})
         }
         ast::Expr::Not(ref e0) =>
         {
@@ -407,8 +468,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             check_type(&typ_ast::Type::Bool, &t0.typ, t0.loc)?;
 
         Ok(typ_ast::Typed { typ: typ_ast::Type::Bool, mutable: false,
-                data: typ_ast::Expr::Not(Box::new(t0)),
-                lvalue: false, loc: e.loc })
+                lvalue: false, loc: e.loc, always_return: t0.always_return,
+                data: typ_ast::Expr::Not(Box::new(t0)) })
         }
         ast::Expr::Deref(ref e0) =>
         {
@@ -425,8 +486,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             };
 
             Ok(typ_ast::Typed { typ: deref_typ, mutable: m,
-                data: typ_ast::Expr::Deref(Box::new(t0)),
-                lvalue: true, loc: e.loc })
+                lvalue: true, loc: e.loc, always_return: t0.always_return,
+                data: typ_ast::Expr::Deref(Box::new(t0)) })
         }
         ast::Expr::Ref(ref e0) =>
         {
@@ -438,6 +499,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
 
             Ok(typ_ast::Typed { mutable:false, lvalue:false, loc: e.loc,
                 typ: typ_ast::Type::Ref(Box::new(t0.typ.clone())),
+                always_return: t0.always_return,
                 data: typ_ast::Expr::Ref(Box::new(t0)) })
         }
         ast::Expr::MutRef(ref e0) =>
@@ -455,8 +517,10 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
 
             Ok(typ_ast::Typed { mutable: false, lvalue: false, loc: e.loc,
                 typ: typ_ast::Type::MutRef(Box::new(t0.typ.clone())),
+                always_return: t0.always_return,
                 data: typ_ast::Expr::MutRef(Box::new(t0)) })
         }
+        ast::Expr::ArrayAccess(_, _) => unimplemented!(),
         ast::Expr::Attribute(ref e0, ref attr_name) =>
         {
             let t0 = type_expr(e0, ctx)?;
@@ -482,9 +546,11 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             }?;
 
             Ok(typ_ast::Typed { mutable: t0.mutable, lvalue: t0.lvalue, typ,
-                data: typ_ast::Expr::Attribute(Box::new(t0), attr_name.clone()),
-                loc: e.loc })
+                loc: e.loc, always_return: t0.always_return,
+                data: typ_ast::Expr::Attribute(Box::new(t0), attr_name.clone())
+                })
         }
+        ast::Expr::MethodCall(_, _, _) => unimplemented!(),
         ast::Expr::Constant(ref val) =>
         {
             let typ = match *val
@@ -495,7 +561,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             };
 
             Ok(typ_ast::Typed { typ, mutable: false, lvalue: false, loc: e.loc,
-                data: typ_ast::Expr::Constant(val.clone()) } )
+                data: typ_ast::Expr::Constant(val.clone()),
+                always_return: false })
         }
         ast::Expr::Variable(ref id) =>
         {
@@ -510,7 +577,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             };
 
             Ok(typ_ast::Typed { typ, mutable, loc: e.loc, lvalue: true,
-                data: typ_ast::Expr::Variable(id.clone()) })
+                data: typ_ast::Expr::Variable(id.clone()),
+                always_return: false })
         }
         ast::Expr::FunctionCall(ref fun_name, ref args) =>
         {
@@ -525,17 +593,19 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             }
 
             let mut typ_args = Vec::new();
+            let mut always_return = false;
             for (param, arg) in fun_sig.arguments.iter().zip(args)
             {
                 let arg_typ = type_expr(arg, ctx)?;
                 check_type(&param.typ.data, &arg_typ.typ, arg_typ.loc)?;
+                always_return |= arg_typ.always_return;
 
                 typ_args.push(arg_typ);
             }
 
             Ok(typ_ast::Typed { typ: fun_sig.return_type.data.clone(),
                 data: typ_ast::Expr::FunctionCall(fun_name.clone(), typ_args),
-                mutable: false, lvalue: false, loc: e.loc })
+                mutable: false, lvalue: false, loc: e.loc, always_return })
         }
         ast::Expr::StructConstr(ref struct_name, ref fields) =>
         {
@@ -549,9 +619,11 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                     // with the struct
                     let mut found_fields = HashSet::new();
                     let mut field_expr = Vec::new();
+                    let mut always_return = false;
                     for &(ref name, ref expr) in fields
                     {
                         let t_expr = type_expr(expr, ctx)?;
+                        always_return |= t_expr.always_return;
 
                         match struc.fields.get(&name.data)
                         {
@@ -588,10 +660,11 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                     Ok(typ_ast::Typed { mutable: false, lvalue: false,
                         typ: typ_ast::Type::Struct(struct_name.data.clone()),
                         data: typ_ast::Expr::StructConstr(struct_name.clone(),
-                        field_expr), loc: e.loc })
+                        field_expr), loc: e.loc, always_return })
                 }
             }
         }
+        ast::Expr::ListMacro(_, _) => unimplemented!(),
         ast::Expr::StringMacro(ref macro_name, ref string) =>
         {
             match macro_name.data.as_ref()
@@ -599,7 +672,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                 "print" =>
                     Ok(typ_ast::Typed { typ: typ_ast::Type::Void,
                         data: typ_ast::Expr::Print(string.clone()),
-                        mutable: false, lvalue: false, loc: e.loc }),
+                        mutable: false, lvalue: false, loc: e.loc,
+                        always_return: false }),
                 _ => Err(Located::new(TypingError::UnknownMacro(
                     macro_name.data.clone()), macro_name.loc))
             }
@@ -610,9 +684,9 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             let typ_block = type_block(block, ctx)?;
             Ok(typ_ast::Typed { mutable: false, lvalue: false, loc: e.loc,
                 typ: typ_block.expr.typ.clone(),
+                always_return: typ_block.expr.always_return,
                 data: typ_ast::Expr::NestedBlock(Box::new(typ_block)) })
         }
-        _ => unimplemented!()
     }
 }
 
@@ -632,6 +706,8 @@ fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
                        typ_else.expr.loc)?;
 
             Ok(typ_ast::Typed { typ: typ_if.expr.typ.clone(), mutable: false,
+                always_return: typ_if.expr.always_return &&
+                    typ_else.expr.always_return,
                 data: typ_ast::Expr::If(Box::new(typ_cond), Box::new(typ_if),
                     Box::new(typ_else)), lvalue: false, loc })
         }
@@ -644,10 +720,12 @@ fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
             let typ_else = type_ifexpr(ifexpr_else, loc, ctx)?;
             check_type(&typ_if.expr.typ, &typ_else.typ, typ_if.expr.loc)?;
 
+            let always_return = typ_if.expr.always_return &&
+                typ_else.always_return;
             let block_else = typ_ast::Block{ instr:Vec::new(), expr:typ_else };
             Ok(typ_ast::Typed { typ: typ_if.expr.typ.clone(), mutable: false,
                 data: typ_ast::Expr::If(Box::new(typ_cond), Box::new(typ_if),
-                    Box::new(block_else)), lvalue: false, loc })
+                    Box::new(block_else)), lvalue: false, always_return, loc })
         }
     }
 }
@@ -694,6 +772,8 @@ fn check_struct(name: &str, mut struct_decl: &mut HashMap<String, ast::Struct>,
                     TypingError::BorrowedInsideStruct(
                         f.name.data.clone(), typ.clone()), f.typ.loc));
             }
+            typ_ast::Type::Unknown(_) =>
+                panic!("Unknown type placeholder in struct fields")
         }
 
         let ltyp = Located::new(typ, f.typ.loc);
