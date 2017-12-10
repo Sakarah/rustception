@@ -36,15 +36,12 @@ pub type LType = Located<Type>;
 pub enum Type
 {
     Void,                            // ()
-    Int32,                           // i32
-    Bool,                            // bool
-    Struct(Ident),                   // <Ident>
+    Basic(Ident),                    // <Ident>
     Parametrized(Ident, Box<Type>),  // <Ident>'<'<Type>'>'
     Ref(Box<Type>),                  // &<Type>
     MutRef(Box<Type>)                // &mut <Type>
 }
 
-#[derive(Clone)]
 pub struct Arg // "mut"? <Ident> : <Type>
 {
     pub mutable: bool,

@@ -97,12 +97,7 @@ Field: ast::Field =
 Type: ast::Type =
 {
     "(" ")" => ast::Type::Void,
-    <id:Ident> =>
-    {
-        if &id == "i32" { ast::Type::Int32 }
-        else if &id == "bool" { ast::Type::Bool }
-        else { ast::Type::Struct(id) }
-    },
+    <id:Ident> => ast::Type::Basic(id),
 
     <id:Ident> "<" <params:Type> ">" =>
         ast::Type::Parametrized(id, Box::new(params)),

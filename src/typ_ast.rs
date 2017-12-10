@@ -1,6 +1,6 @@
 use location::{Span,Located};
 use ast;
-use ast::{Ident,LIdent,Type,LType};
+use ast::{Ident,LIdent};
 use std::collections::HashMap;
 
 pub struct Typed<T>
@@ -21,7 +21,7 @@ pub struct Program
 #[derive(Clone)]
 pub struct FunSignature
 {
-    pub arguments: Vec<ast::Arg>,
+    pub arguments: Vec<Arg>,
     pub return_type: LType
 }
 
@@ -34,6 +34,28 @@ pub struct Fun
 pub struct Struct
 {
     pub fields: HashMap<Ident, LType>
+}
+
+pub type LType = Located<Type>;
+// The Type enum only stores well formed types
+#[derive(Clone, Debug)]
+pub enum Type
+{
+    Void,
+    Int32,
+    Bool,
+    Struct(Ident),
+    Vector(Box<Type>),
+    Ref(Box<Type>),
+    MutRef(Box<Type>)
+}
+
+#[derive(Clone)]
+pub struct Arg
+{
+    pub mutable: bool,
+    pub name: LIdent,
+    pub typ: LType
 }
 
 pub struct Block
