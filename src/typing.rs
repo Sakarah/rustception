@@ -34,7 +34,9 @@ pub enum TypingError
     MultipleFieldInit(ast::Ident),
     LackingField(ast::Ident, ast::Ident),
     FieldAccessOnNonStruct(typ_ast::Type),
-    UnknownStruct(ast::Ident)
+    UnknownStruct(ast::Ident),
+    ArrayAccessOnRvalue,
+    ArrayAccessOnScalarType(typ_ast::Type)
 }
 
 type Result<T> = ::std::result::Result<T,Located<TypingError>>;
@@ -208,7 +210,7 @@ fn check_type(expected: &typ_ast::Type, found: &typ_ast::Type, loc: Span)
             }
 
             // Unification with the other type
-            *e = Some(found.clone());
+            *e = Some(simplify_type(found));
             Ok(())
         }
         (_, &typ_ast::Type::Unknown(ref f_cell)) =>
@@ -219,11 +221,40 @@ fn check_type(expected: &typ_ast::Type, found: &typ_ast::Type, loc: Span)
                 return check_type(expected, typ_f, loc);
             }
 
-            *f = Some(expected.clone());
+            *f = Some(simplify_type(expected));
             Ok(())
         }
         _ => Err(Located::new(TypingError::MismatchedTypes(expected.clone(),
             found.clone()), loc))
+    }
+}
+
+fn simplify_type(typ: &typ_ast::Type) -> typ_ast::Type
+{
+    match *typ
+    {
+        typ_ast::Type::Void | typ_ast::Type::Int32 | typ_ast::Type::Bool |
+        typ_ast::Type::Struct(_) =>
+            typ.clone(),
+        typ_ast::Type::Vector(ref t) =>
+            typ_ast::Type::Vector(Box::new(simplify_type(t))),
+        typ_ast::Type::Ref(ref t) =>
+            typ_ast::Type::Ref(Box::new(simplify_type(t))),
+        typ_ast::Type::MutRef(ref t) =>
+            typ_ast::Type::MutRef(Box::new(simplify_type(t))),
+        typ_ast::Type::Unknown(ref t_cell) =>
+        {
+            // Use mut here to avoid infinite recursion
+            let t_res = t_cell.try_borrow_mut();
+            if let Ok(t_opt) = t_res
+            {
+                if let Some(ref t) = *t_opt
+                {
+                    return simplify_type(t);
+                }
+            }
+            typ.clone()
+        }
     }
 }
 
@@ -476,8 +507,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             let t0 = type_expr(e0, ctx)?;
             let (deref_typ, m) = match t0.typ
             {
-                typ_ast::Type::Ref(ref typ) => (*typ.clone(), false),
-                typ_ast::Type::MutRef(ref typ) => (*typ.clone(), true),
+                typ_ast::Type::Ref(ref typ) => (simplify_type(typ), false),
+                typ_ast::Type::MutRef(ref typ) => (simplify_type(typ), true),
                 _ =>
                 {
                     return Err(Located::new(TypingError::CannotDeref(t0.typ),
@@ -498,7 +529,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             }
 
             Ok(typ_ast::Typed { mutable:false, lvalue:false, loc: e.loc,
-                typ: typ_ast::Type::Ref(Box::new(t0.typ.clone())),
+                typ: typ_ast::Type::Ref(Box::new(simplify_type(&t0.typ))),
                 always_return: t0.always_return,
                 data: typ_ast::Expr::Ref(Box::new(t0)) })
         }
@@ -516,11 +547,36 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             }
 
             Ok(typ_ast::Typed { mutable: false, lvalue: false, loc: e.loc,
-                typ: typ_ast::Type::MutRef(Box::new(t0.typ.clone())),
+                typ: typ_ast::Type::MutRef(Box::new(simplify_type(&t0.typ))),
                 always_return: t0.always_return,
                 data: typ_ast::Expr::MutRef(Box::new(t0)) })
         }
-        ast::Expr::ArrayAccess(_, _) => unimplemented!(),
+        ast::Expr::ArrayAccess(ref array, ref index) =>
+        {
+            let typ_index = type_expr(index, ctx)?;
+            check_type(&typ_ast::Type::Int32, &typ_index.typ, typ_index.loc)?;
+
+            let typ_array = type_expr(array, ctx)?;
+            if !typ_array.lvalue
+            {
+                return Err(Located::new(TypingError::ArrayAccessOnRvalue,
+                                        typ_array.loc));
+            }
+            match typ_array.typ.clone()
+            {
+                typ_ast::Type::Vector(ref data_typ) =>
+                {
+                    Ok(typ_ast::Typed { mutable: typ_array.mutable, lvalue:true,
+                        typ: simplify_type(data_typ), loc: e.loc,
+                        always_return: typ_index.always_return ||
+                            typ_array.always_return,
+                        data: typ_ast::Expr::ArrayAccess(Box::new(typ_array),
+                            Box::new(typ_index)) })
+                }
+                _ => Err(Located::new(TypingError::ArrayAccessOnScalarType(
+                    typ_array.typ.clone()), e.loc))
+            }
+        }
         ast::Expr::Attribute(ref e0, ref attr_name) =>
         {
             let t0 = type_expr(e0, ctx)?;
@@ -538,7 +594,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                         None => Err(Located::new(TypingError::InvalidFieldName(
                             attr_name.data.clone(), struct_name.clone()),
                             attr_name.loc)),
-                        Some(ref field_typ) => Ok(field_typ.data.clone())
+                        Some(ref field_typ) =>
+                            Ok(simplify_type(&field_typ.data))
                     }
                 }
                 _ => Err(Located::new(TypingError::FieldAccessOnNonStruct(
@@ -573,7 +630,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                     return Err(Located::new(
                         TypingError::VariableUnbound(id.data.clone()), e.loc));
                 }
-                Some(ref full_typ) => (full_typ.typ.clone(), full_typ.mutable)
+                Some(ref full_typ) =>
+                    (simplify_type(&full_typ.typ), full_typ.mutable)
             };
 
             Ok(typ_ast::Typed { typ, mutable, loc: e.loc, lvalue: true,
@@ -664,7 +722,34 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                 }
             }
         }
-        ast::Expr::ListMacro(_, _) => unimplemented!(),
+        ast::Expr::ListMacro(ref macro_name, ref elements) =>
+        {
+            match macro_name.data.as_ref()
+            {
+                "vec" =>
+                {
+                    let vec_type = Box::new(typ_ast::Type::Unknown(
+                        Rc::new(RefCell::new(None))));
+                    let mut typ_elements = Vec::new();
+                    let mut always_return = false;
+                    for elem in elements
+                    {
+                        let typ_elem = type_expr(elem, ctx)?;
+                        check_type(&vec_type, &typ_elem.typ, typ_elem.loc)?;
+                        always_return |= typ_elem.always_return;
+
+                        typ_elements.push(typ_elem);
+                    }
+
+                    Ok(typ_ast::Typed { typ: typ_ast::Type::Vector(vec_type),
+                        data: typ_ast::Expr::VecConstr(typ_elements),
+                        mutable: false, lvalue: false, loc: e.loc,
+                        always_return })
+                }
+                _ => Err(Located::new(TypingError::UnknownMacro(
+                    macro_name.data.clone()), macro_name.loc))
+            }
+        }
         ast::Expr::StringMacro(ref macro_name, ref string) =>
         {
             match macro_name.data.as_ref()
@@ -683,7 +768,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
         {
             let typ_block = type_block(block, ctx)?;
             Ok(typ_ast::Typed { mutable: false, lvalue: false, loc: e.loc,
-                typ: typ_block.expr.typ.clone(),
+                typ: simplify_type(&typ_block.expr.typ),
                 always_return: typ_block.expr.always_return,
                 data: typ_ast::Expr::NestedBlock(Box::new(typ_block)) })
         }
@@ -705,8 +790,8 @@ fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
             check_type(&typ_if.expr.typ, &typ_else.expr.typ,
                        typ_else.expr.loc)?;
 
-            Ok(typ_ast::Typed { typ: typ_if.expr.typ.clone(), mutable: false,
-                always_return: typ_if.expr.always_return &&
+            Ok(typ_ast::Typed { typ: simplify_type(&typ_if.expr.typ),
+                mutable: false, always_return: typ_if.expr.always_return &&
                     typ_else.expr.always_return,
                 data: typ_ast::Expr::If(Box::new(typ_cond), Box::new(typ_if),
                     Box::new(typ_else)), lvalue: false, loc })
@@ -723,9 +808,10 @@ fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
             let always_return = typ_if.expr.always_return &&
                 typ_else.always_return;
             let block_else = typ_ast::Block{ instr:Vec::new(), expr:typ_else };
-            Ok(typ_ast::Typed { typ: typ_if.expr.typ.clone(), mutable: false,
+            Ok(typ_ast::Typed { typ: simplify_type(&typ_if.expr.typ),
+                mutable: false, lvalue: false, always_return, loc,
                 data: typ_ast::Expr::If(Box::new(typ_cond), Box::new(typ_if),
-                    Box::new(block_else)), lvalue: false, always_return, loc })
+                    Box::new(block_else)) })
         }
     }
 }
