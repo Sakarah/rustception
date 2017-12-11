@@ -230,6 +230,10 @@ fn check_type(expected: &typ_ast::Type, found: &typ_ast::Type, loc: Span)
     }
 }
 
+/**
+ * Build a copy of 'typ' by replacing discovered unknown types by their real
+ * types
+ */
 fn simplify_type(typ: &typ_ast::Type) -> typ_ast::Type
 {
     match *typ
@@ -340,6 +344,9 @@ fn type_function(f_name: &str, f_body: ast::Block, ctx:&GlobalContext)
     Ok(typ_ast::Fun { sig: f_sig.clone(), body: typ_body })
 }
 
+/**
+ * Type the given block
+ */
 fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
 {
     let mut lctx = ctx.clone();
@@ -418,6 +425,9 @@ fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
     Ok(typ_ast::Block { instr:typ_instr, expr:typ_expr })
 }
 
+/**
+ * Type the given expression
+ */
 fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
 {
     match e.data
@@ -761,23 +771,30 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             {
                 "vec" =>
                 {
-                    let vec_type = Box::new(typ_ast::Type::Unknown(
-                        Rc::new(RefCell::new(None))));
+                    let mut vec_type = typ_ast::Type::Unknown(Rc::new(
+                        RefCell::new(None)));
                     let mut typ_elements = Vec::new();
                     let mut always_return = false;
                     for elem in elements
                     {
                         let typ_elem = type_expr(elem, ctx)?;
-                        check_type(&vec_type, &typ_elem.typ, typ_elem.loc)?;
+
+                        // We want the most generic type of the given arguments
+                        if check_type(&vec_type, &typ_elem.typ, typ_elem.loc)
+                            .is_err()
+                        {
+                            check_type(&typ_elem.typ, &vec_type, typ_elem.loc)?;
+                            vec_type = typ_elem.typ.clone();
+                        }
                         always_return |= typ_elem.always_return;
 
                         typ_elements.push(typ_elem);
                     }
 
-                    Ok(typ_ast::Typed { typ: typ_ast::Type::Vector(vec_type),
+                    Ok(typ_ast::Typed { mutable: false, lvalue: false,
+                        typ: typ_ast::Type::Vector(Box::new(vec_type)),
                         data: typ_ast::Expr::VecConstr(typ_elements),
-                        mutable: false, lvalue: false, loc: e.loc,
-                        always_return })
+                        loc: e.loc, always_return })
                 }
                 _ => Err(Located::new(TypingError::UnknownMacro(
                     macro_name.data.clone()), macro_name.loc))
