@@ -1,3 +1,4 @@
+use symbol::Symbol;
 use location::{Span,Located};
 use ast;
 use ast::{Ident,LIdent};
@@ -101,7 +102,7 @@ pub enum Expr
     StructConstr(LIdent, Vec<(LIdent, TExpr)>),
     VecConstr(Vec<TExpr>),
     VecLen(Box<TExpr>),
-    Print(String),
+    Print(Symbol),
     If(Box<TExpr>, Box<Block>, Box<Block>),
     NestedBlock(Box<Block>)
 }

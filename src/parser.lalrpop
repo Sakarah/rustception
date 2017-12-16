@@ -1,5 +1,6 @@
 use ast;
 use lexer::{Token,LexingError};
+use symbol::Symbol;
 use location::*;
 
 grammar;
@@ -12,8 +13,8 @@ extern
     enum Token
     {
         Int => Token::Integer(<i32>),
-        Ident => Token::Identifier(<String>),
-        Str => Token::StringLiteral(<String>),
+        Ident => Token::Identifier(<Symbol>),
+        Str => Token::StringLiteral(<Symbol>),
 
         "else" => Token::Else,
         "false" => Token::False,

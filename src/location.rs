@@ -14,12 +14,20 @@ pub struct Location
     pub column: u32,
 }
 
-const DEFAULT_LOCATION : Location = Location{offset:0, line:1, column:1};
-const NOWHERE : Location = Location{offset:0, line:0, column:0};
+const NOWHERE : Location = Location { offset:0, line:0, column:0 };
+
+impl Location
+{
+    /// Create a location on the first character of the specified file.
+    pub fn new() -> Location
+    {
+        Location { offset:0, line:1, column:1 }
+    }
+}
 
 impl Default for Location
 {
-    fn default() -> Self { DEFAULT_LOCATION }
+    fn default() -> Location { NOWHERE }
 }
 
 impl fmt::Display for Location
@@ -30,14 +38,13 @@ impl fmt::Display for Location
     }
 }
 
-
 //   ____
 //  / ___| _ __   __ _ _ __
 //  \___ \| '_ \ / _` | '_ \
 //   ___) | |_) | (_| | | | |
 //  |____/| .__/ \__,_|_| |_|
 //        |_|
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Span
 {
     pub start: Location,
@@ -48,6 +55,12 @@ pub const EMPTY_SPAN : Span = Span{start:NOWHERE, end:NOWHERE};
 
 impl Span
 {
+    /// Create a span on the first character of specified file
+    pub fn new() -> Span
+    {
+        Span { start: Location::new(), end: Location::new() }
+    }
+
     /// Extend the location by one character
     pub fn extend(&mut self, c: u8)
     {
@@ -101,7 +114,8 @@ pub struct Located<T>
 
 impl<T> Located<T>
 {
-    pub fn new(data:T, loc:Span) -> Self
+    /// Create a new located element with given data and location
+    pub fn new(data:T, loc:Span) -> Located<T>
     {
         Located { data, loc }
     }
@@ -114,3 +128,5 @@ impl<T:Clone> Clone for Located<T>
         Located::new(self.data.clone(), self.loc)
     }
 }
+
+impl<T:Copy> Copy for Located<T> { }

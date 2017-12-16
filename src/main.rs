@@ -1,3 +1,4 @@
+mod symbol;
 mod location;
 mod lexer;
 mod ast;

@@ -7,6 +7,7 @@ use lexer::Token::*;
 use lexer::LexingError::*;
 use lexer::LexerState::*;
 
+use symbol::Symbol;
 use location::{Location,Span};
 
 //   _____     _
@@ -18,10 +19,10 @@ use location::{Location,Span};
 pub enum Token
 {
     Integer(i32),
-    Identifier(String),
+    Identifier(Symbol),
 
     // "string"
-    StringLiteral(String),
+    StringLiteral(Symbol),
 
     // Keywords
     Else, False, Fn, If, Let, Mut, Return, Struct, True, While,
@@ -57,16 +58,16 @@ impl fmt::Display for Token
             Identifier(ref s) => write!(f, "ID({})", s),
             StringLiteral(ref s) => write!(f, "STR({})", s),
 
-            Else => write!(f, "ELSE"),
-            False => write!(f, "FALSE"),
-            Fn => write!(f, "FN"),
-            If => write!(f, "IF"),
-            Let => write!(f,"LET"),
-            Mut => write!(f, "MUT"),
-            Return => write!(f, "RETURN"),
-            Struct => write!(f, "STRUCT"),
-            True => write!(f, "TRUE"),
-            While => write!(f, "WHILE"),
+            Else => write!(f, "else"),
+            False => write!(f, "false"),
+            Fn => write!(f, "fn"),
+            If => write!(f, "if"),
+            Let => write!(f,"let"),
+            Mut => write!(f, "mut"),
+            Return => write!(f, "return"),
+            Struct => write!(f, "struct"),
+            True => write!(f, "true"),
+            While => write!(f, "while"),
 
             Eq => write!(f,"="),
             Dot => write!(f, "."),
@@ -190,13 +191,13 @@ impl<R:Read> Lexer<R>
     /**
      * Create a new lexer parsing tokens from the given input.
      */
-    pub fn from_channel(channel: R) -> Self
+    pub fn from_channel(channel: R) -> Lexer<R>
     {
         Lexer {
             value: Vec::new(),
             input: channel.bytes().peekable(),
             state: LexerState::InitialState,
-            loc: Span::default()
+            loc: Span::new()
         }
     }
 
@@ -292,7 +293,8 @@ impl<R:Read> Lexer<R>
             // Case ReadInt
             (ReadInt, b'0' ... b'9') => self.value.push(c),
             (ReadInt, b'_') => (),
-            (ReadInt, _) => {
+            (ReadInt, _) =>
+            {
                 token = Some(Integer(i32_from_digits(&self.value)));
                 self.value = Vec::new();
                 self.state = InitialState;
@@ -303,8 +305,10 @@ impl<R:Read> Lexer<R>
             (ReadIdentifier, b'A' ... b'Z') |
             (ReadIdentifier, b'0' ... b'9') |
             (ReadIdentifier, b'_') => self.value.push(c),
-            (ReadIdentifier, _) => {
-                let identifier = String::from_utf8(self.value.clone())?;
+            (ReadIdentifier, _) =>
+            {
+                let raw_ident = self.value.drain(..).collect();
+                let identifier = String::from_utf8(raw_ident)?;
                 match identifier.as_ref()
                 {
                     "else" => token = Some(Else),
@@ -317,16 +321,16 @@ impl<R:Read> Lexer<R>
                     "struct" => token = Some(Struct),
                     "true" => token = Some(True),
                     "while" => token = Some(While),
-                    _ => token = Some(Identifier(identifier))
+                    _ => token = Some(Identifier(Symbol::from(identifier)))
                 };
-                self.value.clear();
                 self.state = InitialState;
             },
 
-            (ReadQuotedString, b'"') => {
-                let string = String::from_utf8(self.value.clone())?;
-                token = Some(StringLiteral(string));
-                self.value.clear();
+            (ReadQuotedString, b'"') =>
+            {
+                let raw_str = self.value.drain(..).collect();
+                let string = String::from_utf8(raw_str)?;
+                token = Some(StringLiteral(Symbol::from(string)));
                 self.state = InitialState;
             },
             (ReadQuotedString, b'\\') =>

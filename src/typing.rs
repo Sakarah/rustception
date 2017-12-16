@@ -1,13 +1,12 @@
 use ast;
 use typ_ast;
+use symbol::Symbol;
 use location::{Located, Span};
 use std::collections::{HashMap,HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
 
-/**
- * Errors that can occur during typing.
- */
+/// Errors that can occur during typing.
 #[derive(Debug)]
 pub enum TypingError
 {
@@ -44,8 +43,8 @@ type Result<T> = ::std::result::Result<T,Located<TypingError>>;
 
 struct GlobalContext
 {
-    funs: HashMap<String, typ_ast::FunSignature>,
-    structs: HashMap<String, typ_ast::Struct>
+    funs: HashMap<ast::Ident, typ_ast::FunSignature>,
+    structs: HashMap<ast::Ident, typ_ast::Struct>
 }
 
 /**
@@ -84,8 +83,8 @@ pub fn type_program(prgm: ast::Program) -> Result<typ_ast::Program>
     // Then check that the structs are well formed and add them to the context
     while !struct_decl.is_empty()
     {
-        let s = struct_decl.keys().next().unwrap().clone();
-        check_struct(&s, &mut struct_decl, &mut ctx, &struct_names)?;
+        let s = *struct_decl.keys().next().unwrap();
+        check_struct(s, &mut struct_decl, &mut ctx, &struct_names)?;
     }
 
     // Now process functions
@@ -112,7 +111,7 @@ pub fn type_program(prgm: ast::Program) -> Result<typ_ast::Program>
     let mut typ_funs = HashMap::new();
     for (name, body) in fun_body
     {
-        let typ_f = type_function(&name, body, &ctx)?;
+        let typ_f = type_function(name, body, &ctx)?;
         typ_funs.insert(name, typ_f);
     }
 
@@ -125,22 +124,22 @@ pub fn type_program(prgm: ast::Program) -> Result<typ_ast::Program>
  * Return a typ_ast::Type corresponding to the well formed type.
  * The location 'loc' is used for error reporting.
  */
-fn check_well_formed(typ: &ast::Type, loc: Span, struct_names: &HashSet<String>)
+fn check_well_formed(typ: &ast::Type, loc: Span, struct_names: &HashSet<Symbol>)
     -> Result<typ_ast::Type>
 {
     match *typ
     {
         ast::Type::Void =>
             Ok(typ_ast::Type::Void),
-        ast::Type::Basic(ref id) if struct_names.contains(id) =>
-            Ok(typ_ast::Type::Struct(id.clone())),
-        ast::Type::Basic(ref id) if id == "bool" =>
+        ast::Type::Basic(id) if struct_names.contains(&id) =>
+            Ok(typ_ast::Type::Struct(id)),
+        ast::Type::Basic(id) if &*id.to_str() == "bool" =>
             Ok(typ_ast::Type::Bool),
-        ast::Type::Basic(ref id) if id == "i32" =>
+        ast::Type::Basic(id) if &*id.to_str() == "i32" =>
             Ok(typ_ast::Type::Int32),
-        ast::Type::Basic(ref id) =>
-            Err(Located::new(TypingError::UnknownType(id.clone()), loc)),
-        ast::Type::Parametrized(ref id, ref typ) if id == "Vec" =>
+        ast::Type::Basic(id) =>
+            Err(Located::new(TypingError::UnknownType(id), loc)),
+        ast::Type::Parametrized(id, ref typ) if &*id.to_str() == "Vec" =>
         {
             let t = check_well_formed(typ, loc, struct_names)?;
             Ok(typ_ast::Type::Vector(Box::new(t)))
@@ -268,7 +267,7 @@ fn simplify_type(typ: &typ_ast::Type) -> typ_ast::Type
  * Return a typ_ast::FunSignature if it is the case.
  */
 fn check_fun_sig(f_args: Vec<ast::Arg>, f_ret: ast::LType,
-                 struct_names: &HashSet<String>)
+                 struct_names: &HashSet<Symbol>)
     -> Result<typ_ast::FunSignature>
 {
     let ret_type = check_well_formed(&f_ret.data, f_ret.loc, struct_names)?;
@@ -297,7 +296,7 @@ pub struct FullType
 #[derive(Clone)]
 struct LocalContext<'a>
 {
-    vars: HashMap<String, FullType>,
+    vars: HashMap<ast::Ident, FullType>,
     global: &'a GlobalContext,
     return_type: &'a typ_ast::Type
 }
@@ -305,10 +304,10 @@ struct LocalContext<'a>
 /**
  * Type the given function. (Name must correspond to the actual body.)
  */
-fn type_function(f_name: &str, f_body: ast::Block, ctx:&GlobalContext)
+fn type_function(f_name: Symbol, f_body: ast::Block, ctx:&GlobalContext)
     -> Result<typ_ast::Fun>
 {
-    let f_sig = ctx.funs.get(f_name).unwrap();
+    let f_sig = ctx.funs.get(&f_name).unwrap();
 
     // Check return value
     if is_borrowed(&f_sig.return_type.data)
@@ -347,7 +346,8 @@ fn type_function(f_name: &str, f_body: ast::Block, ctx:&GlobalContext)
 /**
  * Type the given block
  */
-fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
+fn type_block<'a>(b: &ast::Block, ctx:&LocalContext<'a>)
+    -> Result<typ_ast::Block>
 {
     let mut lctx = ctx.clone();
     let mut typ_instr = Vec::new();
@@ -428,7 +428,8 @@ fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
 /**
  * Type the given expression
  */
-fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
+fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
+    -> Result<typ_ast::TExpr>
 {
     match e.data
     {
@@ -596,8 +597,8 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             {
                 typ_ast::Type::Struct(ref struct_name) =>
                 {
-                    let struc = &ctx.global.structs.get(struct_name).unwrap();
-                    // Safe to unwrap here as type_expr should only  ^^^^^^^^
+                    let struc = &ctx.global.structs.get(&struct_name).unwrap();
+                    // Safe to unwrap here as type_expr should only   ^^^^^^^^
                     // return valid types.
 
                     match struc.fields.get(&attr_name.data)
@@ -625,7 +626,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
             {
                 typ_ast::Type::Vector(_) =>
                 {
-                    match method_name.data.as_ref()
+                    match &*method_name.data.to_str()
                     {
                         "len" =>
                         {
@@ -753,8 +754,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                         if !found_fields.contains(name)
                         {
                             return Err(Located::new(TypingError::LackingField(
-                                name.clone(), struct_name.data.clone()),
-                                e.loc));
+                                *name, struct_name.data), e.loc));
                         }
                     }
 
@@ -767,7 +767,7 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
         }
         ast::Expr::ListMacro(ref macro_name, ref elements) =>
         {
-            match macro_name.data.as_ref()
+            match &*macro_name.data.to_str()
             {
                 "vec" =>
                 {
@@ -800,9 +800,9 @@ fn type_expr(e: &ast::LExpr, ctx:&LocalContext) -> Result<typ_ast::TExpr>
                     macro_name.data.clone()), macro_name.loc))
             }
         }
-        ast::Expr::StringMacro(ref macro_name, ref string) =>
+        ast::Expr::StringMacro(macro_name, string) =>
         {
-            match macro_name.data.as_ref()
+            match &*macro_name.data.to_str()
             {
                 "print" =>
                     Ok(typ_ast::Typed { typ: typ_ast::Type::Void,
@@ -843,7 +843,7 @@ fn auto_deref(e: typ_ast::TExpr) -> typ_ast::TExpr
     else { e }
 }
 
-fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
+fn type_ifexpr<'a>(e: &ast::IfExpr, loc: Span, ctx:&LocalContext<'a>)
     -> Result<typ_ast::TExpr>
 {
     match *e
@@ -890,11 +890,13 @@ fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
  * This function is recursive as we might need to compute nested structs.
  * It panics if 'struct_decl' does not contain any element associated to 'name'.
  */
-fn check_struct(name: &str, mut struct_decl: &mut HashMap<String, ast::Struct>,
-                mut ctx: &mut GlobalContext, struct_names: &HashSet<String>)
+fn check_struct(name: Symbol,
+                mut struct_decl: &mut HashMap<Symbol, ast::Struct>,
+                mut ctx: &mut GlobalContext,
+                struct_names: &HashSet<Symbol>)
     -> Result<()>
 {
-    let s = struct_decl.remove(name).unwrap();
+    let s = struct_decl.remove(&name).unwrap();
 
     let mut fields = HashMap::new();
     for f in s.fields
@@ -904,11 +906,11 @@ fn check_struct(name: &str, mut struct_decl: &mut HashMap<String, ast::Struct>,
         {
             typ_ast::Type::Void | typ_ast::Type::Bool |
             typ_ast::Type::Int32 | typ_ast::Type::Vector(_) => (),
-            typ_ast::Type::Struct(ref name) =>
+            typ_ast::Type::Struct(name) =>
             {
-                if !ctx.structs.contains_key(name)
+                if !ctx.structs.contains_key(&name)
                 {
-                    if struct_decl.contains_key(name)
+                    if struct_decl.contains_key(&name)
                     {
                         check_struct(name, &mut struct_decl, &mut ctx,
                                      &struct_names)?;
@@ -938,7 +940,7 @@ fn check_struct(name: &str, mut struct_decl: &mut HashMap<String, ast::Struct>,
         }
     }
 
-    ctx.structs.insert(String::from(name), typ_ast::Struct{ fields });
+    ctx.structs.insert(name, typ_ast::Struct{ fields });
     Ok(())
 }
 

@@ -1,6 +1,7 @@
+use symbol::Symbol;
 use location::Located;
 
-pub type Ident = String;
+pub type Ident = Symbol;
 pub type LIdent = Located<Ident>;
 
 pub type Program = Vec<Decl>;
@@ -96,7 +97,7 @@ pub enum Expr
     FunctionCall(LIdent, Vec<LExpr>),           // <Ident>(<Expr>,*)
     StructConstr(LIdent, Vec<(LIdent, LExpr)>), // <Ident>{ (<Ident>:<Expr>),* }
     ListMacro(LIdent,Vec<LExpr>),               // <Ident>![<Expr>,*]
-    StringMacro(LIdent,String),                 // <Ident>!("<StringLiteral>")
+    StringMacro(LIdent,Symbol),                 // <Ident>!("<StringLiteral>")
     If(Box<IfExpr>),                            // <IfExpr>
     NestedBlock(Box<Block>)                     // <Block>
 }
