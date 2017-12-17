@@ -5,10 +5,14 @@ mod ast;
 mod parser;
 mod typ_ast;
 mod typing;
+mod error;
 
 use std::fs::File;
 use lexer::Lexer;
+use error::Error;
 use std::process::exit;
+
+extern crate lalrpop_util;
 
 fn main()
 {
@@ -29,23 +33,23 @@ fn main()
     }
     if filename == ""
     {
-        println!("You must give a filename as argument");
+        eprintln!("{}", Error::NoInputFile);
         exit(1);
     }
 
     // Parse the file
     let file = File::open(&filename).unwrap_or_else(|err| {
-        println!("Unable to open file '{}': {}", &filename, err);
+        eprintln!("{}", Error::OpenFileError(filename.clone(), err));
         exit(1); });
-    let lexer = Lexer::from_channel(file);
+    let lexer = Lexer::from_channel(file, filename);
     let ast = parser::parse_Program(lexer).unwrap_or_else(|err| {
-        println!("Parsing error: {}", err);
+        eprintln!("{}", Error::ParsingError(err));
         exit(1); });
     if parse_only { exit(0); }
 
     // Check types
     let _ = typing::type_program(ast).unwrap_or_else(|err| {
-        println!("Type error: {:?}", err);
+        eprintln!("{}", Error::TypingError(err));
         exit(1); });
     if type_only { exit(0); }
 

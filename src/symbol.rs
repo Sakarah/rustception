@@ -18,25 +18,37 @@ use std::marker::PhantomData;
  * allows fast copy or comparison.
  * To create a symbol or convert it back to string use the methods in SymTable.
  */
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Symbol
 {
     id: usize,
     dummy: PhantomData<*const str> // Disable Sync and Send
 }
 
+/// The invalid symbol
+pub const INVALID_SYM : Symbol = Symbol { id: !0, dummy: PhantomData };
+
 impl Symbol
 {
-    /// Get the associated symbol for the given string
+    /// Get the associated symbol for the given string.
     pub fn from(s: String) -> Symbol
     {
         SYM_TABLE.with(|tbl| tbl.borrow_mut().get_symbol(s))
     }
 
-    /// Converts the symbol to its associated string
+    /// Converts the symbol to its associated string.
+    /// Panics if the symbol is invalid.
     pub fn to_str(self) -> Rc<str>
     {
         SYM_TABLE.with(|tbl| tbl.borrow().get_str(self))
+    }
+}
+
+impl fmt::Debug for Symbol
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+    {
+        write!(f, "Symbol {{ id: {}, str: \"{}\" }}", self.id, self.to_str())
     }
 }
 

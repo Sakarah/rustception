@@ -102,7 +102,7 @@ pub enum Expr
     NestedBlock(Box<Block>)                     // <Block>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum Const
 {
     Void,
@@ -139,5 +139,3 @@ pub enum ArithOp
 }
 
 pub const EXPR_VOID : Expr = Expr::Constant(Const::Void);
-pub const LEXPR_VOID : LExpr =
-    Located { data:EXPR_VOID, loc: ::location::EMPTY_SPAN };

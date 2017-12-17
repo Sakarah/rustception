@@ -1,4 +1,5 @@
 use std::fmt;
+use symbol::{Symbol,INVALID_SYM};
 
 //   _                    _   _
 //  | |    ___   ___ __ _| |_(_) ___  _ __
@@ -6,22 +7,24 @@ use std::fmt;
 //  | |__| (_) | (_| (_| | |_| | (_) | | | |
 //  |_____\___/ \___\__,_|\__|_|\___/|_| |_|
 //
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct Location
 {
+    pub filename: Symbol,
     pub offset: u32,
     pub line: u32,
     pub column: u32,
 }
 
-const NOWHERE : Location = Location { offset:0, line:0, column:0 };
+const NOWHERE : Location = Location { filename: INVALID_SYM, offset:0,
+                                      line:0, column:0 };
 
 impl Location
 {
     /// Create a location on the first character of the specified file.
-    pub fn new() -> Location
+    pub fn new(filename: Symbol) -> Location
     {
-        Location { offset:0, line:1, column:1 }
+        Location { filename, offset:0, line:1, column:1 }
     }
 }
 
@@ -34,7 +37,15 @@ impl fmt::Display for Location
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
     {
-        write!(f, "line {}, character {}", self.line, self.column)
+        if self != &NOWHERE
+        {
+            write!(f, "File \"{}\", line {}, character {}",
+                   self.filename.to_str(), self.line, self.column)
+        }
+        else
+        {
+            write!(f, "<Nowhere>")
+        }
     }
 }
 
@@ -44,21 +55,19 @@ impl fmt::Display for Location
 //   ___) | |_) | (_| | | | |
 //  |____/| .__/ \__,_|_| |_|
 //        |_|
-#[derive(Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct Span
 {
     pub start: Location,
     pub end: Location
 }
 
-pub const EMPTY_SPAN : Span = Span{start:NOWHERE, end:NOWHERE};
-
 impl Span
 {
     /// Create a span on the first character of specified file
-    pub fn new() -> Span
+    pub fn new(filename: Symbol) -> Span
     {
-        Span { start: Location::new(), end: Location::new() }
+        Span { start: Location::new(filename), end: Location::new(filename) }
     }
 
     /// Extend the location by one character
@@ -87,14 +96,24 @@ impl fmt::Display for Span
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
     {
-        if self.start.line == self.end.line
+        if self.start.filename == self.end.filename
         {
-            write!(f, "line {}, characters {}-{}", self.start.line,
-                                   self.start.column, self.end.column)
+            if self.start.line == self.end.line
+            {
+                write!(f, "File \"{}\", line {}, characters {}-{}",
+                       self.start.filename.to_str(), self.start.line,
+                       self.start.column, self.end.column)
+            }
+            else
+            {
+                write!(f, "File \"{}\", lines {}-{}",
+                       self.start.filename.to_str(),
+                       self.start.line, self.end.line)
+            }
         }
         else
         {
-            write!(f, "{}-{}", self.start, self.end)
+            write!(f, "{} - {}", self.start, self.end)
         }
     }
 }

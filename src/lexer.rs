@@ -54,9 +54,9 @@ impl fmt::Display for Token
     {
         match *self
         {
-            Integer(n) => write!(f, "INT({})", n),
-            Identifier(ref s) => write!(f, "ID({})", s),
-            StringLiteral(ref s) => write!(f, "STR({})", s),
+            Integer(n) => write!(f, "Int({})", n),
+            Identifier(ref s) => write!(f, "Ident({})", s),
+            StringLiteral(ref s) => write!(f, "Str({})", s),
 
             Else => write!(f, "else"),
             False => write!(f, "false"),
@@ -119,30 +119,9 @@ pub enum LexingError
     UnfinishedComment,
     UnfinishedStringLitteral,
     Utf8Error(std::string::FromUtf8Error),
-    UnknownEscapedChar(u8),
+    UnknownEscapedChar(u8, Location),
     ExpectedCharacter(char, Location),
     IllegalCharacter(u8, Location)
-}
-
-impl fmt::Display for LexingError
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
-    {
-        match *self
-        {
-            IoError(ref err) => write!(f, "IO error: {}\n", err),
-            UnfinishedComment => write!(f, "Some commentary does not end\n"),
-            UnfinishedStringLitteral =>
-                write!(f, "Unfinished string litteral\n"),
-            Utf8Error(ref err) => write!(f, "UTF8 conversion error: {}", err),
-            UnknownEscapedChar(c) =>
-                write!(f, "Unknown escaped character {}", c as char),
-            ExpectedCharacter(exp, pos) =>
-                write!(f, "Expected character '{}' {}", exp, pos),
-            IllegalCharacter(ch, pos) =>
-                write!(f, "Illegal character '{}' {}", ch as char, pos)
-        }
-    }
 }
 
 impl From<io::Error> for LexingError
@@ -191,13 +170,13 @@ impl<R:Read> Lexer<R>
     /**
      * Create a new lexer parsing tokens from the given input.
      */
-    pub fn from_channel(channel: R) -> Lexer<R>
+    pub fn from_channel(channel: R, filename: String) -> Lexer<R>
     {
         Lexer {
             value: Vec::new(),
             input: channel.bytes().peekable(),
             state: LexerState::InitialState,
-            loc: Span::new()
+            loc: Span::new(Symbol::from(filename))
         }
     }
 
@@ -342,7 +321,7 @@ impl<R:Read> Lexer<R>
                     b'\\' => self.value.push(b'\\'),
                     b'"' => self.value.push(b'\"'),
                     b'0' => self.value.push(b'\0'),
-                    c => return Err(UnknownEscapedChar(c))
+                    c => return Err(UnknownEscapedChar(c, self.loc.end))
                 }
             },
             (ReadQuotedString, _) => self.value.push(c),

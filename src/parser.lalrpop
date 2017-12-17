@@ -81,7 +81,7 @@ Fun: ast::Fun =
         ast::Fun{ name, arguments:args, return_type:ret_type, body },
     "fn" <name:Loc<Ident>> "(" <args:Comma<Arg>> ")" <body:Block> =>
         ast::Fun{ name, arguments:args, body,
-                  return_type: Located::new(ast::Type::Void, EMPTY_SPAN) }
+                  return_type: Located::new(ast::Type::Void, name.loc) }
 };
 
 Struct: ast::Struct =
@@ -120,11 +120,11 @@ Mut: bool =
 
 Block: ast::Block =
 {
-    "{" <instr:(Loc<Instr>)*> <expr:(Loc<Expr>)?> "}" =>
+    "{" <instr:(Loc<Instr>)*> <expr:Loc<Expr?>> "}" =>
     {
-        if let Some(e) = expr
+        if let Some(e) = expr.data
         {
-            ast::Block { instr, expr:e }
+            ast::Block { instr, expr:Located::new(e,expr.loc) }
         }
         else
         {
@@ -139,12 +139,14 @@ Block: ast::Block =
                 else
                 {
                     instr.push(Located::new(data, loc));
-                    ast::Block { instr, expr:ast::LEXPR_VOID }
+                    ast::Block { instr,
+                        expr: Located::new(ast::EXPR_VOID, expr.loc) }
                 }
             }
             else
             {
-                ast::Block { instr, expr:ast::LEXPR_VOID }
+                ast::Block { instr,
+                    expr: Located::new(ast::EXPR_VOID, expr.loc) }
             }
         }
     }
@@ -162,17 +164,19 @@ Instr: ast::Instr =
     "while" <cond:Loc<Expr>> <body:Block> =>
         ast::Instr::While(cond, Box::new(body)),
 
-    "return" <expr:(Loc<Expr>)?> ";" =>
-        ast::Instr::Return(expr.unwrap_or(ast::LEXPR_VOID)),
+    "return" <expr:Loc<Expr?>> ";" =>
+        ast::Instr::Return(Located::new(expr.data.unwrap_or(ast::EXPR_VOID),
+                                        expr.loc)),
 
     <instr:IfExpr> => ast::Instr::If(instr)
 };
 
 IfExpr: ast::IfExpr =
 {
-    "if" <cond:Loc<Expr>> <block_true:Block> =>
+    "if" <cond:Loc<Expr>> <block_true:Block> <loc: Loc<()>> =>
     {
-        let empty_block = ast::Block { instr:Vec::new(), expr:ast::LEXPR_VOID };
+        let empty_block = ast::Block { instr:Vec::new(),
+            expr: Located::new(ast::EXPR_VOID, loc.loc) };
         ast::IfExpr::Single(cond, Box::new(block_true), Box::new(empty_block))
     },
     "if" <cond:Loc<Expr>> <block_true:Block> "else" <block_false:Block> =>

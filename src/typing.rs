@@ -15,7 +15,7 @@ pub enum TypingError
     MultipleFieldDecl(ast::Ident),
     UnknownType(ast::Ident),
     UnknownParametrizedType(ast::Ident),
-    MismatchedTypes(typ_ast::Type, typ_ast::Type),
+    MismatchedTypes { found: typ_ast::Type, expected: typ_ast::Type },
     FunctionReturnBorrowed(typ_ast::Type),
     MultipleArgumentDecl(ast::Ident),
     AssignmentOnRvalue,
@@ -25,13 +25,13 @@ pub enum TypingError
     MutBorrowOnConstant,
     VariableUnbound(ast::Ident),
     UnknownFunction(ast::Ident),
-    WrongNumberOfArguments(usize, usize),
+    WrongNumberOfArguments { found: usize, expected:usize },
     UnknownMacro(ast::Ident),
     CyclicStruct(ast::Ident),
     BorrowedInsideStruct(ast::Ident, typ_ast::Type),
-    InvalidFieldName(ast::Ident, ast::Ident),
+    InvalidFieldName { field: ast::Ident, struc: ast::Ident },
     MultipleFieldInit(ast::Ident),
-    LackingField(ast::Ident, ast::Ident),
+    LackingField { field: ast::Ident, struc: ast::Ident },
     FieldAccessOnNonStruct(typ_ast::Type),
     UnknownStruct(ast::Ident),
     ArrayAccessOnRvalue,
@@ -69,13 +69,13 @@ pub fn type_program(prgm: ast::Program) -> Result<typ_ast::Program>
             ast::Decl::Function(f) => fun_decl.push(f),
             ast::Decl::Structure(s) =>
             {
-                if !struct_names.insert(s.name.data.clone())
+                if !struct_names.insert(s.name.data)
                 {
                     return Err(Located::new(
                             TypingError::MultipleStructDecl(s.name.data),
                             s.name.loc));
                 }
-                struct_decl.insert(s.name.data.clone(), s);
+                struct_decl.insert(s.name.data, s);
             }
         }
     }
@@ -95,7 +95,7 @@ pub fn type_program(prgm: ast::Program) -> Result<typ_ast::Program>
     for f in fun_decl
     {
         let sig = check_fun_sig(f.arguments, f.return_type, &struct_names)?;
-        if ctx.funs.insert(f.name.data.clone(), sig).is_none()
+        if ctx.funs.insert(f.name.data, sig).is_none()
         {
             fun_body.push((f.name.data, f.body));
         }
@@ -146,8 +146,7 @@ fn check_well_formed(typ: &ast::Type, loc: Span, struct_names: &HashSet<Symbol>)
         }
         ast::Type::Parametrized(ref id, _) =>
         {
-            Err(Located::new(TypingError::UnknownParametrizedType(id.clone()),
-                             loc))
+            Err(Located::new(TypingError::UnknownParametrizedType(*id), loc))
         }
         ast::Type::Ref(ref typ) =>
         {
@@ -224,8 +223,8 @@ fn check_type(expected: &typ_ast::Type, found: &typ_ast::Type, loc: Span)
             *f = Some(simplify_type(expected));
             Ok(())
         }
-        _ => Err(Located::new(TypingError::MismatchedTypes(expected.clone(),
-            found.clone()), loc))
+        _ => Err(Located::new(TypingError::MismatchedTypes {
+            expected: expected.clone(), found: found.clone() }, loc))
     }
 }
 
@@ -324,13 +323,13 @@ fn type_function(f_name: Symbol, f_body: ast::Block, ctx:&GlobalContext)
     {
         let arg_typ = FullType { mutable: arg.mutable,
                                  typ: arg.typ.data.clone() };
-        match lctx.vars.insert(arg.name.data.clone(), arg_typ)
+        match lctx.vars.insert(arg.name.data, arg_typ)
         {
             None => (),
             Some(_) =>
             {
                 return Err(Located::new(
-                    TypingError::MultipleArgumentDecl(arg.name.data.clone()),
+                    TypingError::MultipleArgumentDecl(arg.name.data),
                     arg.name.loc));
             }
         }
@@ -372,9 +371,9 @@ fn type_block<'a>(b: &ast::Block, ctx:&LocalContext<'a>)
                 always_return |= typ_expr.always_return;
 
                 let var_typ = FullType{ mutable:*m, typ:typ_expr.typ.clone() };
-                lctx.vars.insert(ident.data.clone(), var_typ);
+                lctx.vars.insert(ident.data, var_typ);
                 typ_instr.push(Located::new(
-                    typ_ast::Instr::Let(ident.clone(), typ_expr), instr.loc));
+                    typ_ast::Instr::Let(*ident, typ_expr), instr.loc));
             }
             ast::Instr::While(ref cond, ref body) =>
             {
@@ -524,7 +523,7 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
                 _ =>
                 {
                     return Err(Located::new(TypingError::CannotDeref(t0.typ),
-                                e.loc));
+                               e.loc));
                 }
             };
 
@@ -585,8 +584,8 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
                         data: typ_ast::Expr::ArrayAccess(Box::new(typ_array),
                             Box::new(typ_index)) })
                 }
-                _ => Err(Located::new(TypingError::ArrayAccessOnScalarType(
-                    typ_array.typ.clone()), e.loc))
+                t => Err(Located::new(TypingError::ArrayAccessOnScalarType(t),
+                         e.loc))
             }
         }
         ast::Expr::Attribute(ref e0, ref attr_name) =>
@@ -603,8 +602,8 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
 
                     match struc.fields.get(&attr_name.data)
                     {
-                        None => Err(Located::new(TypingError::InvalidFieldName(
-                            attr_name.data.clone(), struct_name.clone()),
+                        None => Err(Located::new(TypingError::InvalidFieldName {
+                            field: attr_name.data, struc: *struct_name },
                             attr_name.loc)),
                         Some(ref field_typ) =>
                             Ok(simplify_type(&field_typ.data))
@@ -616,8 +615,7 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
 
             Ok(typ_ast::Typed { mutable: t0.mutable, lvalue: t0.lvalue, typ,
                 loc: e.loc, always_return: t0.always_return,
-                data: typ_ast::Expr::Attribute(Box::new(t0), attr_name.clone())
-                })
+                data: typ_ast::Expr::Attribute(Box::new(t0), *attr_name) })
         }
         ast::Expr::MethodCall(ref obj, ref method_name, ref args) =>
         {
@@ -633,8 +631,9 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
                             if args.len() != 0
                             {
                                 return Err(Located::new(
-                                    TypingError::WrongNumberOfArguments(0,
-                                    args.len()), e.loc));
+                                    TypingError::WrongNumberOfArguments {
+                                        expected: 0, found: args.len() },
+                                        e.loc));
                             }
 
                             Ok(typ_ast::Typed { mutable: false, lvalue: false,
@@ -643,12 +642,12 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
                                 always_return: false })
                         }
                         _ => Err(Located::new(TypingError::UnknownMethod(
-                            method_name.data.clone(), typ_obj.typ.clone()),
+                            method_name.data, typ_obj.typ.clone()),
                             method_name.loc))
                     }
                 }
                 _ => Err(Located::new(TypingError::UnknownMethod(
-                    method_name.data.clone(), typ_obj.typ.clone()),
+                    method_name.data, typ_obj.typ.clone()),
                     method_name.loc))
             }
         }
@@ -662,7 +661,7 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
             };
 
             Ok(typ_ast::Typed { typ, mutable: false, lvalue: false, loc: e.loc,
-                data: typ_ast::Expr::Constant(val.clone()),
+                data: typ_ast::Expr::Constant(*val),
                 always_return: false })
         }
         ast::Expr::Variable(ref id) =>
@@ -672,26 +671,27 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
                 None =>
                 {
                     return Err(Located::new(
-                        TypingError::VariableUnbound(id.data.clone()), e.loc));
+                        TypingError::VariableUnbound(id.data), e.loc));
                 }
                 Some(ref full_typ) =>
                     (simplify_type(&full_typ.typ), full_typ.mutable)
             };
 
             Ok(typ_ast::Typed { typ, mutable, loc: e.loc, lvalue: true,
-                data: typ_ast::Expr::Variable(id.clone()),
+                data: typ_ast::Expr::Variable(*id),
                 always_return: false })
         }
         ast::Expr::FunctionCall(ref fun_name, ref args) =>
         {
             let fun_sig = ctx.global.funs.get(&fun_name.data)
                 .ok_or(Located::new(TypingError::UnknownFunction(
-                    fun_name.data.clone()), fun_name.loc))?;
+                    fun_name.data), fun_name.loc))?;
 
             if fun_sig.arguments.len() != args.len()
             {
-                return Err(Located::new(TypingError::WrongNumberOfArguments(
-                    fun_sig.arguments.len(), args.len()), e.loc));
+                return Err(Located::new(TypingError::WrongNumberOfArguments {
+                    expected: fun_sig.arguments.len(), found: args.len() },
+                    e.loc));
             }
 
             let mut typ_args = Vec::new();
@@ -706,7 +706,7 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
             }
 
             Ok(typ_ast::Typed { typ: fun_sig.return_type.data.clone(),
-                data: typ_ast::Expr::FunctionCall(fun_name.clone(), typ_args),
+                data: typ_ast::Expr::FunctionCall(*fun_name, typ_args),
                 mutable: false, lvalue: false, loc: e.loc, always_return })
         }
         ast::Expr::StructConstr(ref struct_name, ref fields) =>
@@ -714,7 +714,7 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
             match ctx.global.structs.get(&struct_name.data)
             {
                 None => return Err(Located::new(TypingError::UnknownStruct(
-                    struct_name.data.clone()), struct_name.loc)),
+                    struct_name.data), struct_name.loc)),
                 Some(ref struc) =>
                 {
                     // Type all the fields given and check if their type match
@@ -730,20 +730,20 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
                         match struc.fields.get(&name.data)
                         {
                             None => return Err(Located::new(
-                                TypingError::InvalidFieldName(name.data.clone(),
-                                struct_name.data.clone()), name.loc)),
+                                TypingError::InvalidFieldName { field:name.data,
+                                struc: struct_name.data }, name.loc)),
                             Some(ref typ) =>
                             {
                                 check_type(&typ.data, &t_expr.typ, t_expr.loc)?;
 
-                                if !found_fields.insert(name.data.clone())
+                                if !found_fields.insert(name.data)
                                 {
                                     return Err(Located::new(
                                         TypingError::MultipleFieldInit(
-                                        name.data.clone()), name.loc));
+                                        name.data), name.loc));
                                 }
 
-                                field_expr.push((name.clone(), t_expr));
+                                field_expr.push((*name, t_expr));
                             }
                         }
                     }
@@ -753,14 +753,15 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
                     {
                         if !found_fields.contains(name)
                         {
-                            return Err(Located::new(TypingError::LackingField(
-                                *name, struct_name.data), e.loc));
+                            return Err(Located::new(TypingError::LackingField {
+                                field: *name, struc: struct_name.data },
+                                e.loc));
                         }
                     }
 
                     Ok(typ_ast::Typed { mutable: false, lvalue: false,
-                        typ: typ_ast::Type::Struct(struct_name.data.clone()),
-                        data: typ_ast::Expr::StructConstr(struct_name.clone(),
+                        typ: typ_ast::Type::Struct(struct_name.data),
+                        data: typ_ast::Expr::StructConstr(*struct_name,
                         field_expr), loc: e.loc, always_return })
                 }
             }
@@ -797,7 +798,7 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
                         loc: e.loc, always_return })
                 }
                 _ => Err(Located::new(TypingError::UnknownMacro(
-                    macro_name.data.clone()), macro_name.loc))
+                    macro_name.data), macro_name.loc))
             }
         }
         ast::Expr::StringMacro(macro_name, string) =>
@@ -806,11 +807,11 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
             {
                 "print" =>
                     Ok(typ_ast::Typed { typ: typ_ast::Type::Void,
-                        data: typ_ast::Expr::Print(string.clone()),
+                        data: typ_ast::Expr::Print(string),
                         mutable: false, lvalue: false, loc: e.loc,
                         always_return: false }),
                 _ => Err(Located::new(TypingError::UnknownMacro(
-                    macro_name.data.clone()), macro_name.loc))
+                    macro_name.data), macro_name.loc))
             }
         }
         ast::Expr::If(ref if_expr) => type_ifexpr(if_expr, e.loc, ctx),
@@ -918,7 +919,7 @@ fn check_struct(name: Symbol,
                     else
                     {
                         return Err(Located::new(TypingError::CyclicStruct(
-                            name.clone()), f.typ.loc));
+                            name), f.typ.loc));
                     }
                 }
             }
@@ -926,14 +927,14 @@ fn check_struct(name: Symbol,
             {
                 return Err(Located::new(
                     TypingError::BorrowedInsideStruct(
-                        f.name.data.clone(), typ.clone()), f.typ.loc));
+                        f.name.data, typ.clone()), f.typ.loc));
             }
             typ_ast::Type::Unknown(_) =>
                 panic!("Unknown type placeholder in struct fields")
         }
 
         let ltyp = Located::new(typ, f.typ.loc);
-        if fields.insert(f.name.data.clone(), ltyp).is_some()
+        if fields.insert(f.name.data, ltyp).is_some()
         {
             return Err(Located::new(TypingError::MultipleFieldDecl(f.name.data),
                 f.name.loc));
