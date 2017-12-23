@@ -162,18 +162,18 @@ fn check_well_formed(typ: &ast::Type, loc: Span, struct_names: &HashSet<Symbol>)
 }
 
 /**
- * Return true if 'typ' is a borrowed type
+ * Return true if 'typ' is a borrowed type or contains a borrowed type
  */
-fn is_borrowed(typ: &typ_ast::Type) -> bool
+fn contains_borrowed(typ: &typ_ast::Type) -> bool
 {
     match *typ
     {
         typ_ast::Type::Void | typ_ast::Type::Int32 | typ_ast::Type::Bool |
-        typ_ast::Type::Struct(_) | typ_ast::Type::Vector(_) |
-        typ_ast::Type::Unknown(_) =>
+        typ_ast::Type::Struct(_) | typ_ast::Type::Unknown(_) =>
             false,
         typ_ast::Type::Ref(_) | typ_ast::Type::MutRef(_) =>
-            true
+            true,
+        typ_ast::Type::Vector(ref t) => contains_borrowed(t)
     }
 }
 
@@ -309,7 +309,7 @@ fn type_function(f_name: Symbol, f_body: ast::Block, ctx:&GlobalContext)
     let f_sig = ctx.funs.get(&f_name).unwrap();
 
     // Check return value
-    if is_borrowed(&f_sig.return_type.data)
+    if contains_borrowed(&f_sig.return_type.data)
     {
         return Err(Located::new(
             TypingError::FunctionReturnBorrowed(f_sig.return_type.data.clone()),
@@ -905,8 +905,8 @@ fn check_struct(name: Symbol,
         let typ = check_well_formed(&f.typ.data, f.typ.loc, struct_names)?;
         match typ
         {
-            typ_ast::Type::Void | typ_ast::Type::Bool |
-            typ_ast::Type::Int32 | typ_ast::Type::Vector(_) => (),
+            typ_ast::Type::Void | typ_ast::Type::Bool | typ_ast::Type::Int32 =>
+                (),
             typ_ast::Type::Struct(name) =>
             {
                 if !ctx.structs.contains_key(&name)
@@ -923,7 +923,10 @@ fn check_struct(name: Symbol,
                     }
                 }
             }
-            typ_ast::Type::Ref(_) | typ_ast::Type::MutRef(_) =>
+            typ_ast::Type::Vector(ref t) if !contains_borrowed(t) =>
+                (),
+            typ_ast::Type::Ref(_) | typ_ast::Type::MutRef(_) |
+            typ_ast::Type::Vector(_) =>
             {
                 return Err(Located::new(
                     TypingError::BorrowedInsideStruct(

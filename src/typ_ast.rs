@@ -107,28 +107,30 @@ pub enum Instr
 pub type TExpr = Typed<Expr>;
 pub enum Expr
 {
+    Constant(ast::Const),
+    Variable(LIdent),
     Assignment(Box<TExpr>, Box<TExpr>),
+    FunctionCall(LIdent, Vec<TExpr>),
 
     Logic(ast::LogicOp, Box<TExpr>, Box<TExpr>),
     Comparison(ast::Comp, Box<TExpr>, Box<TExpr>),
     Arithmetic(ast::ArithOp, Box<TExpr>, Box<TExpr>),
-
     Minus(Box<TExpr>),
     Not(Box<TExpr>),
+
     Deref(Box<TExpr>),
     Ref(Box<TExpr>),
     MutRef(Box<TExpr>),
 
-    ArrayAccess(Box<TExpr>, Box<TExpr>),
+    StructConstr(LIdent, Vec<(LIdent, TExpr)>),
     Attribute(Box<TExpr>, LIdent),
 
-    Constant(ast::Const),
-    Variable(LIdent),
-    FunctionCall(LIdent, Vec<TExpr>),
-    StructConstr(LIdent, Vec<(LIdent, TExpr)>),
     VecConstr(Vec<TExpr>),
+    ArrayAccess(Box<TExpr>, Box<TExpr>),
     VecLen(Box<TExpr>),
+
     Print(Symbol),
+
     If(Box<TExpr>, Box<Block>, Box<Block>),
     NestedBlock(Box<Block>)
 }
