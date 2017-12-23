@@ -260,26 +260,21 @@ Factor: ast::Expr =
 
 UnaryExpr: ast::Expr =
 {
-    "-" <e:Loc<ArrExpr>> => ast::Expr::Minus(Box::new(e)),
-    "!" <e:Loc<ArrExpr>> => ast::Expr::Not(Box::new(e)),
-    "*" <e:Loc<ArrExpr>> => ast::Expr::Deref(Box::new(e)),
-    "&" <e:Loc<ArrExpr>> => ast::Expr::Ref(Box::new(e)),
-    "&" "mut" <e:Loc<ArrExpr>> => ast::Expr::MutRef(Box::new(e)),
-    <e:ArrExpr> => e
+    "-" <e:Loc<UnaryExpr>> => ast::Expr::Minus(Box::new(e)),
+    "!" <e:Loc<UnaryExpr>> => ast::Expr::Not(Box::new(e)),
+    "*" <e:Loc<UnaryExpr>> => ast::Expr::Deref(Box::new(e)),
+    "&" <e:Loc<UnaryExpr>> => ast::Expr::Ref(Box::new(e)),
+    "&" "mut" <e:Loc<UnaryExpr>> => ast::Expr::MutRef(Box::new(e)),
+    <e:AccExpr> => e
 };
 
-ArrExpr: ast::Expr =
+AccExpr: ast::Expr =
 {
-    <e:Loc<DotExpr>> "[" <i:Loc<Expr>> "]" =>
+    <e:Loc<AccExpr>> "[" <i:Loc<Expr>> "]" =>
         ast::Expr::ArrayAccess(Box::new(e), Box::new(i)),
-    <e:DotExpr> => e
-};
-
-DotExpr: ast::Expr =
-{
-    <e:Loc<DotExpr>> "." <attr:Loc<Ident>> =>
+    <e:Loc<AccExpr>> "." <attr:Loc<Ident>> =>
         ast::Expr::Attribute(Box::new(e), attr),
-    <e:Loc<DotExpr>> "." <method:Loc<Ident>>
+    <e:Loc<AccExpr>> "." <method:Loc<Ident>>
         "(" <params:Comma<Loc<Expr>>> ")" =>
         ast::Expr::MethodCall(Box::new(e), method, params),
     <e:AtomicExpr> => e
