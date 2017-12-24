@@ -15,6 +15,7 @@ pub enum TypingError
     MultipleFieldDecl(ast::Ident),
     UnknownType(ast::Ident),
     UnknownParametrizedType(ast::Ident),
+    NotParametrizedType(ast::Ident),
     MismatchedTypes { found: typ_ast::Type, expected: typ_ast::Type },
     FunctionReturnBorrowed(typ_ast::Type),
     MultipleArgumentDecl(ast::Ident),
@@ -139,14 +140,21 @@ fn check_well_formed(typ: &ast::Type, loc: Span, struct_names: &HashSet<Symbol>)
             Ok(typ_ast::Type::Int32),
         ast::Type::Basic(id) =>
             Err(Located::new(TypingError::UnknownType(id), loc)),
-        ast::Type::Parametrized(id, ref typ) if &*id.to_str() == "Vec" =>
+        ast::Type::Parametrized(id, ref typ) =>
         {
-            let t = check_well_formed(typ, loc, struct_names)?;
-            Ok(typ_ast::Type::Vector(Box::new(t)))
-        }
-        ast::Type::Parametrized(ref id, _) =>
-        {
-            Err(Located::new(TypingError::UnknownParametrizedType(*id), loc))
+            if struct_names.contains(&id)
+            {
+                Err(Located::new(TypingError::NotParametrizedType(id), loc))
+            }
+            else if &*id.to_str() == "Vec"
+            {
+                let t = check_well_formed(typ, loc, struct_names)?;
+                Ok(typ_ast::Type::Vector(Box::new(t)))
+            }
+            else
+            {
+                Err(Located::new(TypingError::UnknownParametrizedType(id), loc))
+            }
         }
         ast::Type::Ref(ref typ) =>
         {

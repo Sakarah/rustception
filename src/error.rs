@@ -111,6 +111,9 @@ impl fmt::Display for Error
                         write!(f, "Unknown type `{}`", type_name),
                     TypingError::UnknownParametrizedType(type_name) =>
                         write!(f, "Unknown parametrized type `{}`", type_name),
+                    TypingError::NotParametrizedType(type_name) =>
+                        write!(f, "Type `{}` is not parametrized but is used \
+                               with a template parameter", type_name),
                     TypingError::MismatchedTypes { ref found, ref expected } =>
                         write!(f, "Mismatched types.\n\
                                Expected `{}` and found `{}`", expected, found),
