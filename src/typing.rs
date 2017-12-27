@@ -473,7 +473,8 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
 
             Ok(typ_ast::Typed { typ: typ_ast::Type::Bool, mutable: false,
                 lvalue: false, loc: e.loc,
-                always_return: t1.always_return || t2.always_return,
+                // Lazy evaluation implies that only the first arg always return
+                always_return: t1.always_return,
                 data: typ_ast::Expr::Logic(*op, Box::new(t1), Box::new(t2)) })
         }
         ast::Expr::Comparison(ref op, ref e1, ref e2) =>
