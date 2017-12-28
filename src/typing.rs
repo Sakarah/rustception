@@ -387,6 +387,7 @@ fn type_block<'a>(b: &ast::Block, ctx:&LocalContext<'a>)
             {
                 let typ_cond = type_expr(cond, &lctx)?;
                 check_type(&typ_ast::Type::Bool, &typ_cond.typ, typ_cond.loc)?;
+                always_return |= typ_cond.always_return;
 
                 let typ_body = type_block(body, &lctx)?;
                 typ_instr.push(Located::new(
@@ -414,6 +415,7 @@ fn type_block<'a>(b: &ast::Block, ctx:&LocalContext<'a>)
     }
 
     let typ_expr = type_expr(&b.expr, &lctx)?;
+    always_return |= typ_expr.always_return;
 
     if always_return
     {
@@ -869,8 +871,8 @@ fn type_ifexpr<'a>(e: &ast::IfExpr, loc: Span, ctx:&LocalContext<'a>)
                        typ_else.expr.loc)?;
 
             Ok(typ_ast::Typed { typ: simplify_type(&typ_if.expr.typ),
-                mutable: false, always_return: typ_if.expr.always_return &&
-                    typ_else.expr.always_return,
+                mutable: false, always_return: typ_cond.always_return ||
+                    (typ_if.expr.always_return && typ_else.expr.always_return),
                 data: typ_ast::Expr::If(Box::new(typ_cond), Box::new(typ_if),
                     Box::new(typ_else)), lvalue: false, loc })
         }
