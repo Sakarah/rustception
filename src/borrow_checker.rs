@@ -566,6 +566,10 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
     let expr;
     let typ;
 
+    // Backup context lvalue_action and borrow_lifetime
+    let old_lvalue_action = ctx.lvalue_action;
+    let old_borrow_lt = ctx.borrow_lifetime;
+
     match e.data
     {
         typ_ast::Expr::Constant(c) =>
@@ -623,7 +627,6 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
             ctx.lvalue_action = LValueAction::Move;
             ctx.borrow_lifetime = get_type_lifetime(&new_var.typ);
             let new_val = check_expr(val, ctx)?;
-            ctx.borrow_lifetime = Lifetime::max_value();
 
             check_type(&new_var.typ, &new_val.typ, e.loc)?;
 
@@ -633,7 +636,6 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::FunctionCall(name, ref args) =>
         {
-            let old_blt = ctx.borrow_lifetime;
             let function_lifetime = ctx.next_lifetime();
             ctx.borrow_lifetime = function_lifetime;
             // Add a dummy variable to create a new lifetime for the function
@@ -674,7 +676,6 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
             }
 
             ctx.unwind_up_to(function_lifetime);
-            ctx.borrow_lifetime = old_blt;
 
             expr = bc_ast::Expr::FunctionCall(name, new_args);
             typ = convert_type(&e.typ, e.loc)?;
@@ -719,13 +720,15 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::Deref(ref val) =>
         {
-            let old_lvalue_act = ctx.lvalue_action;
             if let LValueAction::Move = ctx.lvalue_action
             {
                 let result_typ = convert_type(&e.typ, e.loc)?;
                 if is_copy(&result_typ)
                 {
-                    ctx.lvalue_action = LValueAction::Nothing;
+                    // Take a temporary borrow on the referenced value to check
+                    // if copy is possible.
+                    ctx.lvalue_action = LValueAction::Borrow;
+                    ctx.borrow_lifetime = Lifetime::max_value();
                 }
                 else
                 {
@@ -735,7 +738,6 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
             }
 
             let new_val = check_expr(val, ctx)?;
-            ctx.lvalue_action = old_lvalue_act;
 
             match *&new_val.typ
             {
@@ -778,7 +780,6 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::Attribute(ref val, name) =>
         {
-            let old_action = ctx.lvalue_action;
             if let LValueAction::Reassign = ctx.lvalue_action
             {
                 ctx.lvalue_action = LValueAction::PartialReassign;
@@ -787,14 +788,13 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
             {
                 if is_copy(&convert_type(&e.typ, e.loc)?)
                 {
-                    // Do not move the struct if the resulting type is copy
-                    ctx.lvalue_action = LValueAction::Nothing;
+                    // Borrow instead of move the struct if the type is copy
+                    ctx.lvalue_action = LValueAction::Borrow;
+                    ctx.borrow_lifetime = Lifetime::max_value();
                 }
             }
 
             let new_val = check_expr(val, ctx)?;
-
-            ctx.lvalue_action = old_action;
 
             typ = convert_type(&e.typ, e.loc)?; // No references inside struct
             expr = bc_ast::Expr::Attribute(Box::new(new_val), name);
@@ -831,7 +831,6 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::ArrayAccess(ref array, ref index) =>
         {
-            let old_action = ctx.lvalue_action;
             if let LValueAction::Reassign = ctx.lvalue_action
             {
                 ctx.lvalue_action = LValueAction::PartialReassign;
@@ -841,7 +840,9 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
                 if is_copy(&convert_type(&e.typ, e.loc)?)
                 {
                     // Do not move the array if the resulting type is copy
-                    ctx.lvalue_action = LValueAction::Nothing;
+                    // but still borrow it
+                    ctx.lvalue_action = LValueAction::Borrow;
+                    ctx.borrow_lifetime = Lifetime::max_value();
                 }
                 else
                 {
@@ -853,13 +854,9 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
             let new_array = check_expr(array, ctx)?;
 
             ctx.lvalue_action = LValueAction::Move;
-            let old_borrow_lt = ctx.borrow_lifetime;
             ctx.borrow_lifetime = Lifetime::max_value();
 
             let new_index = check_expr(index, ctx)?;
-
-            ctx.lvalue_action = old_action;
-            ctx.borrow_lifetime = old_borrow_lt;
 
             if let bc_ast::Type::Vector(ref t) = new_array.typ
             {
@@ -874,10 +871,9 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::VecLen(ref array) =>
         {
-            let old_action = ctx.lvalue_action;
-            ctx.lvalue_action = LValueAction::Nothing;
+            ctx.lvalue_action = LValueAction::Borrow;
+            ctx.borrow_lifetime = Lifetime::max_value();
             let new_array = check_expr(array, ctx)?;
-            ctx.lvalue_action = old_action;
 
             typ = bc_ast::Type::Int32;
             expr = bc_ast::Expr::VecLen(Box::new(new_array));
@@ -919,6 +915,10 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
             expr = bc_ast::Expr::NestedBlock(Box::new(new_block));
         }
     }
+
+    // Restore context lvalue action and borrow lifetime
+    ctx.lvalue_action = old_lvalue_action;
+    ctx.borrow_lifetime = old_borrow_lt;
 
     Ok(bc_ast::TExpr { data: expr, typ, mutable: e.mutable, lvalue: e.lvalue,
         always_return: e.always_return, loc: e.loc })
