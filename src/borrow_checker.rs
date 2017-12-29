@@ -194,7 +194,7 @@ enum LValueAction
 }
 
 #[derive(Clone)]
-struct Context
+struct Context<'a>
 {
     vars_by_lifetime: Vec<VarState>, // Lifetimes are unique for any context
     lifetime_for_name: HashMap<Ident, Vec<Lifetime>>, // Last = current
@@ -202,17 +202,18 @@ struct Context
     mut_borrow_end: Vec<HashSet<Lifetime>>,
     lvalue_action: LValueAction,
     borrow_lifetime: Lifetime, // Lifetime of the next encountered borrows
+    fun_sigs: &'a HashMap<Ident, typ_ast::FunSignature>
 }
 
-impl Context
+impl<'a> Context<'a>
 {
     /// Create a new empty context
-    fn new() -> Context
+    fn new(fun_sigs: &HashMap<Ident, typ_ast::FunSignature>) -> Context
     {
         Context { vars_by_lifetime: Vec::new(),
             lifetime_for_name: HashMap::new(), borrow_end: Vec::new(),
             mut_borrow_end: Vec::new(), lvalue_action: LValueAction::Move,
-            borrow_lifetime: Lifetime::max_value() }
+            borrow_lifetime: Lifetime::max_value(), fun_sigs }
     }
 
     /// Add the given variable to context
@@ -443,7 +444,7 @@ pub fn check_program(prgm: typ_ast::Program) -> Result<bc_ast::Program>
     let mut funs = HashMap::new();
     for (f_name, f_body) in &prgm.fun_bodies
     {
-        let mut ctx = Context::new();
+        let mut ctx = Context::new(&prgm.fun_sigs);
 
         let f_sig = prgm.fun_sigs.get(f_name).unwrap();
         let mut arguments = Vec::new();
@@ -613,9 +614,37 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
             // Add a dummy variable to create a new lifetime for the function
             ctx.add_variable(name.data, bc_ast::Type::Void);
 
+            let sig = ctx.fun_sigs.get(&name.data).unwrap();
             let mut new_args = Vec::new();
-            for arg in args
+            for (arg, sig_arg) in args.iter().zip(&sig.arguments)
             {
+                // Move arguments by default
+                ctx.lvalue_action = LValueAction::Move;
+
+                if let typ_ast::Type::MutRef(_) = arg.typ
+                {
+                    if let typ_ast::Expr::Variable(var_name) = arg.data
+                    {
+                        // We have a `&mut T` variable used in function call,
+                        // we must perform reborrowing to prevent invalid move.
+                        // Reborrowing use the mutability requested by the
+                        // signature.
+                        match sig_arg.typ.data
+                        {
+                            typ_ast::Type::Ref(_) =>
+                                ctx.borrow_for(var_name.data, function_lifetime,
+                                           false, arg.loc)?,
+                            typ_ast::Type::MutRef(_) =>
+                                ctx.borrow_for(var_name.data, function_lifetime,
+                                           true, arg.loc)?,
+                            _ => panic!("Type error during borrow checking")
+                        }
+
+                        // No move after reborrowing
+                        ctx.lvalue_action = LValueAction::Nothing;
+                    }
+                }
+
                 new_args.push(check_expr(arg, ctx)?);
             }
 
