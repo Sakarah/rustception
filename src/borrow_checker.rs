@@ -571,7 +571,11 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         typ_ast::Expr::Constant(c) =>
         {
             expr = bc_ast::Expr::Constant(c);
-            typ = convert_type(&e.typ, e.loc)?;
+
+            // Convert unresolved type to () here because the only possible
+            // instance of unresolved type here is an empty expression at the
+            // end of a block and this should be accepted.
+            typ = convert_type(&e.typ, e.loc).unwrap_or(bc_ast::Type::Void);
         }
         typ_ast::Expr::Variable(ref id) =>
         {
