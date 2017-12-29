@@ -715,12 +715,17 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::Deref(ref val) =>
         {
+            let old_lvalue_act = ctx.lvalue_action;
             match ctx.lvalue_action
             {
                 LValueAction::Move =>
                 {
                     let result_typ = convert_type(&e.typ, e.loc)?;
-                    if !is_copy(&result_typ)
+                    if is_copy(&result_typ)
+                    {
+                        ctx.lvalue_action = LValueAction::Nothing;
+                    }
+                    else
                     {
                         return Err(Located::new(
                             BorrowError::MoveOutOfDerefValue, e.loc));
@@ -735,6 +740,7 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
             }
 
             let new_val = check_expr(val, ctx)?;
+            ctx.lvalue_action = old_lvalue_act;
 
             match *&new_val.typ
             {
