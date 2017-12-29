@@ -540,18 +540,23 @@ fn check_instr(i: &typ_ast::LInstr, ctx: &mut Context)
 
             bc_ast::Instr::Let(*id, new_val)
         }
-        typ_ast::Instr::While(ref expr, ref block) =>
+        typ_ast::Instr::While(ref cond, ref block) =>
         {
-            let e = check_expr(expr, ctx)?;
+            let c = check_expr(cond, ctx)?;
 
             // We cannot know if the while block will be executed so we must
             // fork the contexts.
             let block_lt = ctx.next_lifetime();
             let mut block_ctx = ctx.clone();
             let b = check_block(block, &mut block_ctx, block_lt)?;
+
+            // We must check the loop twice to check for looping problems
+            check_expr(cond, &mut block_ctx)?;
+            check_block(block, &mut block_ctx, block_lt)?;
+
             ctx.merge_with(block_ctx);
 
-            bc_ast::Instr::While(e, Box::new(b))
+            bc_ast::Instr::While(c, Box::new(b))
         }
         typ_ast::Instr::Return(ref expr) =>
             bc_ast::Instr::Return(check_expr(expr, ctx)?),
@@ -588,7 +593,12 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
 
             match ctx.lvalue_action
             {
-                LValueAction::Move if is_copy(&typ) => (),
+                LValueAction::Move if is_copy(&typ) =>
+                {
+                    // Create a temporary borrow during the copy
+                    ctx.borrow_for(id.data, Lifetime::max_value(), false,
+                                   e.loc)?;
+                }
                 LValueAction::Move =>
                 {
                     ctx.move_var(id.data, e.loc)?;
