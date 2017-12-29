@@ -202,6 +202,8 @@ impl fmt::Display for Error
                                id),
                     BorrowError::MoveOutOfDerefValue =>
                         write!(f, "Cannot move out of dereferenced value"),
+                    BorrowError::MoveOutOfIndexed =>
+                        write!(f, "Cannot move out of indexed content"),
                     BorrowError::MismatchedLifetimes =>
                         write!(f, "Mismatched lifetimes"),
                     BorrowError::UnresolvedType =>

@@ -15,6 +15,7 @@ pub enum BorrowError
     MovedAfterBorrow(Ident),
     ReassignAfterBorrow(Ident),
     MoveOutOfDerefValue,
+    MoveOutOfIndexed,
     MismatchedLifetimes,
     UnresolvedType,
     UnresolvedLifetime,
@@ -790,6 +791,12 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
                 {
                     // Do not move the array if the resulting type is copy
                     ctx.lvalue_action = LValueAction::Nothing;
+                }
+                else
+                {
+                    // Refuse to move out of indexed content
+                    return Err(Located::new(BorrowError::MoveOutOfIndexed,
+                        e.loc));
                 }
             }
             let new_array = check_expr(array, ctx)?;
