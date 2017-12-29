@@ -222,6 +222,10 @@ impl<'a> Context<'a>
         let lt = self.next_lifetime();
         let info = VarState { name, typ, moved: false, borrowed_for: None,
             mut_borrowed_for: None };
+
+        #[cfg(feature = "borrow_log")]
+        print!("Add variable {} at lifetime #{}\n\n", name, lt);
+
         self.lifetime_for_name.entry(name).or_insert(Vec::new()).push(lt);
         self.vars_by_lifetime.push(info);
         self.borrow_end.push(HashSet::new());
@@ -256,6 +260,10 @@ impl<'a> Context<'a>
     fn borrow_for(&mut self, name: Ident, lt: Lifetime, mutable_borrow: bool,
                   loc: Span) -> Result<()>
     {
+        #[cfg(feature = "borrow_log")]
+        print!("{}:\nBorrow {}{} for lifetime #{}\n\n", loc,
+               if mutable_borrow { "mutably " } else { "" }, name, lt);
+
         let var_lt = self.get_lifetime(name);
         if lt < var_lt
         {
@@ -305,6 +313,9 @@ impl<'a> Context<'a>
     /// Try to declare that the variable has been moved and report errors
     fn move_var(&mut self, name: Ident, loc: Span) -> Result<()>
     {
+         #[cfg(feature = "borrow_log")]
+        print!("{}:\nMove variable {}\n\n", loc, name);
+
         let var_lt = self.get_lifetime(name);
         let info = self.vars_by_lifetime.get_mut(var_lt).unwrap();
         if info.moved
@@ -330,6 +341,10 @@ impl<'a> Context<'a>
     fn replace_var(&mut self, name: Ident, partial:bool, loc: Span)
         -> Result<()>
     {
+        #[cfg(feature = "borrow_log")]
+        print!("{}:\nReplace {}{}\n\n", loc, name, if partial { " partially" }
+               else { "" });
+
         let var_lt = self.get_lifetime(name);
         let info = self.vars_by_lifetime.get_mut(var_lt).unwrap();
         if partial && info.moved
@@ -354,6 +369,9 @@ impl<'a> Context<'a>
     /// Unwind the context up to the specified lifetime.
     fn unwind_up_to(&mut self, lt: Lifetime)
     {
+        #[cfg(feature = "borrow_log")]
+        print!("Unwind up to lifetime #{}\n\n", lt);
+
         while self.vars_by_lifetime.len() > lt
         {
             let borr_end = self.borrow_end.pop().unwrap();
@@ -381,6 +399,9 @@ impl<'a> Context<'a>
     /// Merge two contexts after a branching
     fn merge_with(&mut self, mut other: Context)
     {
+        #[cfg(feature = "borrow_log")]
+        print!("Merging contexts\n\n", lt);
+
         // For each variable take the worst configuration
         for (var_lt, other_info) in other.vars_by_lifetime.drain(..).enumerate()
         {

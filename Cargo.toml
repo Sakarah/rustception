@@ -9,3 +9,7 @@ lalrpop = "0.13.1"
 
 [dependencies]
 lalrpop-util = "0.13.1"
+
+[features]
+default = []
+borrow_log = []
