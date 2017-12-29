@@ -606,11 +606,20 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::FunctionCall(name, ref args) =>
         {
+            let old_blt = ctx.borrow_lifetime;
+            let function_lifetime = ctx.next_lifetime();
+            ctx.borrow_lifetime = function_lifetime;
+            // Add a dummy variable to create a new lifetime for the function
+            ctx.add_variable(name.data, bc_ast::Type::Void);
+
             let mut new_args = Vec::new();
             for arg in args
             {
                 new_args.push(check_expr(arg, ctx)?);
             }
+
+            ctx.unwind_up_to(function_lifetime);
+            ctx.borrow_lifetime = old_blt;
 
             expr = bc_ast::Expr::FunctionCall(name, new_args);
             typ = convert_type(&e.typ, e.loc)?;
