@@ -1,18 +1,18 @@
 use std::io;
 use std::fmt;
 use lexer::{LexingError,Token};
-use lalrpop_util;
 use lalrpop_util::ParseError;
-use typing;
 use typing::TypingError;
+use borrow_checker::BorrowError;
 use location::{Location,Span,Located};
 
 pub enum Error
 {
     NoInputFile,
     OpenFileError(String, io::Error),
-    ParsingError(lalrpop_util::ParseError<Location, Token, LexingError>),
-    TypingError(Located<typing::TypingError>),
+    ParsingError(ParseError<Location, Token, LexingError>),
+    TypingError(Located<TypingError>),
+    BorrowCheckingError(Located<BorrowError>),
 }
 
 impl fmt::Display for Error
@@ -175,6 +175,43 @@ impl fmt::Display for Error
                     TypingError::UnknownMethod(method_name, ref typ) =>
                         write!(f, "Unknown method `{}` for type `{}`",
                                method_name, typ),
+                }
+            }
+            Error::BorrowCheckingError(ref err) =>
+            {
+                write!(f, "{}:\nBorrow checking error: ", err.loc)?;
+                match err.data
+                {
+                    BorrowError::LifetimeTooShort(id) =>
+                        write!(f, "`{}` has a too short lifetime to be \
+                               borrowed here", id),
+                    BorrowError::BorrowAfterMove(id) =>
+                        write!(f, "Cannot borrow the moved variable `{}`", id),
+                    BorrowError::BorrowAfterMutBorrow(id) =>
+                        write!(f, "Cannot borrow the variable `{}` that was \
+                               already borrowed mutably", id),
+                    BorrowError::MutBorrowAfterBorrow(id) =>
+                        write!(f, "Cannot borrow mutably the variable `{}` \
+                               that was already borrowed", id),
+                    BorrowError::UsedAfterMove(id) =>
+                        write!(f, "`{}` is used here after beeing moved", id),
+                    BorrowError::MovedAfterBorrow(id) =>
+                        write!(f, "Cannot move the borrowed value `{}`", id),
+                    BorrowError::ReassignAfterBorrow(id) =>
+                        write!(f, "Cannot reassign to the borrowed value `{}`",
+                               id),
+                    BorrowError::MoveOutOfDerefValue =>
+                        write!(f, "Cannot move out of dereferenced value"),
+                    BorrowError::MismatchedLifetimes =>
+                        write!(f, "Mismatched lifetimes"),
+                    BorrowError::UnresolvedType =>
+                        write!(f, "Unresolved type found"),
+                    BorrowError::UnresolvedLifetime =>
+                        write!(f, "Cannot resolve lifetime inside nested
+                               references here.\n\
+                               Nested references are forbidden inside `vec!` and
+                               `if` expression results.\n\
+                               This is a prustc limitation."),
                 }
             }
         }

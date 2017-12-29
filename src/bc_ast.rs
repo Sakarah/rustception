@@ -3,9 +3,9 @@ use location::{Span,Located};
 use ast;
 use ast::{Ident,LIdent};
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::fmt;
+
+// Lifetime are represented by the number of nested blocks
+pub type Lifetime = usize;
 
 pub struct Typed<T>
 {
@@ -19,15 +19,21 @@ pub struct Typed<T>
 
 pub struct Program
 {
-    pub fun_sigs: HashMap<Ident, FunSignature>,
-    pub fun_bodies: HashMap<Ident, Block>,
+    pub funs: HashMap<Ident, Fun>,
     pub structs: HashMap<Ident, Struct>
 }
 
+#[derive(Clone)]
 pub struct FunSignature
 {
     pub arguments: Vec<Arg>,
     pub return_type: LType
+}
+
+pub struct Fun
+{
+    pub sig: FunSignature,
+    pub body: Block
 }
 
 pub struct Struct
@@ -36,7 +42,6 @@ pub struct Struct
 }
 
 pub type LType = Located<Type>;
-// The Type enum only stores well formed types
 #[derive(Clone, Debug)]
 pub enum Type
 {
@@ -45,34 +50,8 @@ pub enum Type
     Bool,
     Struct(Ident),
     Vector(Box<Type>),
-    Ref(Box<Type>),
-    MutRef(Box<Type>),
-    Unknown(Rc<RefCell<Option<Type>>>) // Types that will be discovered later
-}
-
-impl fmt::Display for Type
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
-    {
-        match *self
-        {
-            Type::Void => write!(f, "()"),
-            Type::Int32 => write!(f, "i32"),
-            Type::Bool => write!(f, "bool"),
-            Type::Struct(ref s) => write!(f, "struct {}", s),
-            Type::Vector(ref t) => write!(f, "Vec<{}>", t),
-            Type::Ref(ref t) => write!(f, "&{}", t),
-            Type::MutRef(ref t) => write!(f, "&mut {}", t),
-            Type::Unknown(ref t) =>
-            {
-                match *t.borrow()
-                {
-                    Some(ref t) => write!(f, "{}", t),
-                    None => write!(f, "_")
-                }
-            }
-        }
-    }
+    Ref(Lifetime, Box<Type>),
+    MutRef(Lifetime, Box<Type>)
 }
 
 #[derive(Clone)]

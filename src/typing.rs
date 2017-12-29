@@ -116,8 +116,8 @@ pub fn type_program(prgm: ast::Program) -> Result<typ_ast::Program>
         typ_funs.insert(name, typ_f);
     }
 
-    let typ_prgm = typ_ast::Program { funs: typ_funs, structs: ctx.structs };
-    Ok(typ_prgm)
+    Ok(typ_ast::Program { fun_sigs: ctx.funs, fun_bodies: typ_funs,
+        structs: ctx.structs })
 }
 
 /**
@@ -312,7 +312,7 @@ struct LocalContext<'a>
  * Type the given function. (Name must correspond to the actual body.)
  */
 fn type_function(f_name: Symbol, f_body: ast::Block, ctx:&GlobalContext)
-    -> Result<typ_ast::Fun>
+    -> Result<typ_ast::Block>
 {
     let f_sig = ctx.funs.get(&f_name).unwrap();
 
@@ -347,7 +347,7 @@ fn type_function(f_name: Symbol, f_body: ast::Block, ctx:&GlobalContext)
     check_type(&f_sig.return_type.data, &typ_body.expr.typ,
                typ_body.expr.loc)?;
 
-    Ok(typ_ast::Fun { sig: f_sig.clone(), body: typ_body })
+    Ok(typ_body)
 }
 
 /**

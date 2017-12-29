@@ -5,6 +5,8 @@ mod ast;
 mod parser;
 mod typ_ast;
 mod typing;
+mod bc_ast;
+mod borrow_checker;
 mod error;
 
 use std::fs::File;
@@ -21,7 +23,7 @@ fn main()
     let mut parse_only = false;
     let mut type_only = false;
     let mut no_asm = false;
-    for arg in std::env::args()
+    for arg in std::env::args().skip(1)
     {
         match arg.as_ref()
         {
@@ -48,12 +50,15 @@ fn main()
     if parse_only { exit(0); }
 
     // Check types
-    let _ = typing::type_program(ast).unwrap_or_else(|err| {
+    let typ_ast = typing::type_program(ast).unwrap_or_else(|err| {
         eprintln!("{}", Error::TypingError(err));
         exit(1); });
     if type_only { exit(0); }
 
     // Run the borrow checker
+    let _ = borrow_checker::check_program(typ_ast).unwrap_or_else(|err| {
+        eprintln!("{}", Error::BorrowCheckingError(err));
+        exit(1); });
     if no_asm { exit(0); }
 
     // Produce assembly
