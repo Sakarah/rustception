@@ -658,9 +658,9 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
                 // Move arguments by default
                 ctx.lvalue_action = LValueAction::Move;
 
-                if let typ_ast::Type::MutRef(_) = arg.typ
+                if let typ_ast::Expr::Variable(var_name) = arg.data
                 {
-                    if let typ_ast::Expr::Variable(var_name) = arg.data
+                    if let typ_ast::Type::MutRef(_) = arg.typ
                     {
                         // We have a `&mut T` variable used in function call,
                         // we must perform reborrowing to prevent invalid move.
@@ -678,6 +678,12 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
                         }
 
                         // No move after reborrowing
+                        ctx.lvalue_action = LValueAction::Nothing;
+                    }
+                    else if let typ_ast::Type::Ref(_) = arg.typ
+                    {
+                        // For `&T` variable, the implicit reborrowing just
+                        // prevent copy
                         ctx.lvalue_action = LValueAction::Nothing;
                     }
                 }
@@ -730,6 +736,7 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::Deref(ref val) =>
         {
+            let mut check_borrow_lifetime = false;
             if let LValueAction::Move = ctx.lvalue_action
             {
                 let result_typ = convert_type(&e.typ, e.loc)?;
@@ -746,13 +753,33 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
                         BorrowError::MoveOutOfDerefValue, e.loc));
                 }
             }
+            else if let LValueAction::Borrow = ctx.lvalue_action
+            {
+                // Case of nested `&*` : no borrow propagation if expression
+                // type is immutable borrow, but propagation if mutable.
+                // `&*r` when `r` has type `&mut T` must take a borrow on `r`
+                // because otherwise we could violate the one writer or
+                // multiple reader rule.
+                if let typ_ast::Type::Ref(_) = val.typ
+                {
+                    ctx.lvalue_action = LValueAction::Nothing;
+                    check_borrow_lifetime = true;
+                }
+            }
 
             let new_val = check_expr(val, ctx)?;
 
             match *&new_val.typ
             {
-                bc_ast::Type::Ref(_, ref t) | bc_ast::Type::MutRef(_, ref t) =>
-                    typ = (**t).clone(),
+                bc_ast::Type::Ref(lt,ref t) | bc_ast::Type::MutRef(lt,ref t) =>
+                {
+                    if check_borrow_lifetime && lt > ctx.borrow_lifetime
+                    {
+                        return Err(Located::new(
+                            BorrowError::MismatchedLifetimes, e.loc));
+                    }
+                    typ = (**t).clone();
+                }
                 _ => panic!("Type error during borrow checking")
             }
             expr = bc_ast::Expr::Deref(Box::new(new_val));
