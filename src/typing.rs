@@ -27,6 +27,7 @@ pub enum TypingError
     VariableUnbound(ast::Ident),
     UnknownFunction(ast::Ident),
     WrongNumberOfArguments { found: usize, expected:usize },
+    FunctionCallOnVariable(ast::Ident),
     UnknownMacro(ast::Ident),
     CyclicStruct(ast::Ident),
     BorrowedInsideStruct(ast::Ident, typ_ast::Type),
@@ -353,8 +354,7 @@ fn type_function(f_name: Symbol, f_body: ast::Block, ctx:&GlobalContext)
 /**
  * Type the given block
  */
-fn type_block<'a>(b: &ast::Block, ctx:&LocalContext<'a>)
-    -> Result<typ_ast::Block>
+fn type_block(b: &ast::Block, ctx:&LocalContext) -> Result<typ_ast::Block>
 {
     let mut lctx = ctx.clone();
     let mut typ_instr = Vec::new();
@@ -694,6 +694,12 @@ fn type_expr<'a>(e: &ast::LExpr, ctx:&LocalContext<'a>)
         }
         ast::Expr::FunctionCall(ref fun_name, ref args) =>
         {
+            if ctx.vars.contains_key(&fun_name.data)
+            {
+                return Err(Located::new(TypingError::FunctionCallOnVariable(
+                    fun_name.data), e.loc));
+            }
+
             let fun_sig = ctx.global.funs.get(&fun_name.data)
                 .ok_or(Located::new(TypingError::UnknownFunction(
                     fun_name.data), fun_name.loc))?;
@@ -855,7 +861,7 @@ fn auto_deref(e: typ_ast::TExpr) -> typ_ast::TExpr
     else { e }
 }
 
-fn type_ifexpr<'a>(e: &ast::IfExpr, loc: Span, ctx:&LocalContext<'a>)
+fn type_ifexpr(e: &ast::IfExpr, loc: Span, ctx:&LocalContext)
     -> Result<typ_ast::TExpr>
 {
     match *e

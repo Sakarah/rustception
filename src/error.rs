@@ -142,6 +142,9 @@ impl fmt::Display for Error
                     TypingError::WrongNumberOfArguments { found, expected } =>
                         write!(f, "This function takes {} arguments but {} \
                                were supplied", expected, found),
+                    TypingError::FunctionCallOnVariable(id) =>
+                        write!(f, "`{}` is not a function so it cannot be \
+                               called", id),
                     TypingError::UnknownMacro(macro_name) =>
                         write!(f, "Unknown macro `{}`", macro_name),
                     TypingError::CyclicStruct(struct_name) =>
