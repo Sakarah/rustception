@@ -60,7 +60,7 @@ fn replace_lifetime(typ: &bc_ast::Type, lt: Lifetime) -> bc_ast::Type
         Type::Int32 => Type::Int32,
         Type::Bool => Type::Bool,
         Type::Struct(s) => Type::Struct(s),
-        Type::Vector(ref t) => Type::Vector(t.clone()),
+        Type::Vector(ref t) => Type::Vector(Box::new(replace_lifetime(t, lt))),
         Type::Ref(_, ref t) => Type::Ref(lt, t.clone()),
         Type::MutRef(_, ref t) => Type::MutRef(lt, t.clone()),
     }
