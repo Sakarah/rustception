@@ -2,6 +2,12 @@ use std::collections::HashMap;
 use ast;
 use ast::Ident;
 
+enum Typ
+{
+    Struct(usize),
+    Vector(usize),
+    Primitive
+}
 
 struct Program
 {
@@ -13,10 +19,6 @@ struct Fun
 {
     args: HashMap<Ident, usize>,
     body: Block,
-    /* Corresponding to the needed size that the caller needs to reserve for
-     * returning a struct (equels to 0 in another case)
-     */
-    ret_size: usize,
 }
 
 struct Struct
@@ -28,20 +30,21 @@ struct Struct
 struct Block
 {
     instr: Vec<Instr>,
-    expr: Expr
+    expr: Expr,
+    typ
 }
 
 enum Instr
 {
     Expression(Expr),
-    Let(usize, Expr),
+    Let(usize, Expr, Typ),
     While(Expr, Box<Block>),
     Return(Expr),
 }
 
 enum Expr
 {
-    AssignLocal(Box<Expr>, Box<Expr>),
+    AssignLocal(Box<Expr>, Box<Expr>, Typ),
 
     Logic(ast::LogicOp, Box<Expr>, Box<Expr>),
     Comparison(ast::Comp, Box<Expr>, Box<Expr>),
