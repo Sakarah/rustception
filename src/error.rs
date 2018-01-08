@@ -188,6 +188,8 @@ impl fmt::Display for Error
                     BorrowError::LifetimeTooShort(id) =>
                         write!(f, "`{}` has a too short lifetime to be \
                                borrowed here", id),
+                    BorrowError::VariableOutliveValue(id) =>
+                        write!(f, "`{}` outlives its borrowed value", id),
                     BorrowError::BorrowAfterMove(id) =>
                         write!(f, "Cannot borrow the moved variable `{}`", id),
                     BorrowError::BorrowAfterMutBorrow(id) =>

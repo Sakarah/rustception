@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 pub enum BorrowError
 {
     LifetimeTooShort(Ident),
+    VariableOutliveValue(Ident),
     BorrowAfterMove(Ident),
     BorrowAfterMutBorrow(Ident),
     MutBorrowAfterBorrow(Ident),
@@ -20,7 +21,6 @@ pub enum BorrowError
     UnresolvedType,
     UnresolvedLifetime,
 }
-
 pub type Result<T> = ::std::result::Result<T, Located<BorrowError>>;
 
 /// Return true if the given type is a copy type (i.e. values are never moved).
@@ -31,38 +31,6 @@ fn is_copy(typ: &bc_ast::Type) -> bool
     {
         Type::Void | Type::Int32 | Type::Bool | Type::Ref(_, _) => true,
         Type::Struct(_) | Type::Vector(_) | Type::MutRef(_, _) => false,
-    }
-}
-
-/**
- * Get the most external lifetime inside the given type.
- * If there is no borrow, return Lifetime::max_value().
- */
-fn get_type_lifetime(typ: &bc_ast::Type) -> Lifetime
-{
-    use bc_ast::Type;
-    match *typ
-    {
-        Type::Void | Type::Int32 | Type::Bool | Type::Struct(_) =>
-            Lifetime::max_value(),
-        Type::Vector(ref t) => get_type_lifetime(t),
-        Type::Ref(lt, _) | Type::MutRef(lt, _) => lt
-    }
-}
-
-/// Replace the lifetime by 'lt' if the type is a reference, else return a copy
-fn replace_lifetime(typ: &bc_ast::Type, lt: Lifetime) -> bc_ast::Type
-{
-    use bc_ast::Type;
-    match *typ
-    {
-        Type::Void => Type::Void,
-        Type::Int32 => Type::Int32,
-        Type::Bool => Type::Bool,
-        Type::Struct(s) => Type::Struct(s),
-        Type::Vector(ref t) => Type::Vector(Box::new(replace_lifetime(t, lt))),
-        Type::Ref(_, ref t) => Type::Ref(lt, t.clone()),
-        Type::MutRef(_, ref t) => Type::MutRef(lt, t.clone()),
     }
 }
 
@@ -172,6 +140,55 @@ fn to_lifetimed_type(typ: &typ_ast::Type, lt: Lifetime, loc: Span)
     }
 }
 
+/**
+ * Restrict 'src_typ' to 'restr_typ', this mean that all lifetime parameters
+ * inside 'src_typ' are replaced such that it is at least as restrictive as
+ * 'restr_typ'.
+ * Panics if there is a typing error and return an error if the generated
+ * lifetime extend outside 'lt'.
+ * 'loc' and 'name' are used for reporting errors.
+ */
+fn restrict_type(src_typ: &mut bc_ast::Type, restr_typ: &bc_ast::Type,
+                 lt: Lifetime, loc: Span, name: Ident) -> Result<()>
+{
+    use bc_ast::Type;
+    match *restr_typ
+    {
+        Type::Void | Type::Int32 | Type::Bool | Type::Struct(_) => (),
+        Type::Vector(ref rt) =>
+        {
+            if let Type::Vector(ref mut st) = *src_typ
+            {
+                restrict_type(st, rt, lt, loc, name)?
+            }
+            else
+            {
+                panic!("Type error during borrow checking")
+            }
+        }
+        Type::Ref(restr_lt, ref rt) | Type::MutRef(restr_lt, ref rt) =>
+        {
+            match *src_typ
+            {
+                Type::Ref(ref mut src_lt, ref mut st) |
+                Type::MutRef(ref mut src_lt, ref mut st) =>
+                {
+                    *src_lt = ::std::cmp::max(*src_lt, restr_lt);
+                    if *src_lt > lt
+                    {
+                        return Err(Located::new(
+                            BorrowError::VariableOutliveValue(name), loc));
+                    }
+
+                    restrict_type(st, rt, lt, loc, name)?
+                }
+                _ => panic!("Type error during borrow checking")
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 struct VarState
 {
@@ -182,7 +199,7 @@ struct VarState
     typ: bc_ast::Type
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum LValueAction
 {
     Move,
@@ -190,6 +207,7 @@ enum LValueAction
     BorrowMut,
     Reassign,
     PartialReassign,
+    StoreLifetime,
     Nothing
 }
 
@@ -202,6 +220,8 @@ struct Context<'a>
     mut_borrow_end: Vec<HashSet<Lifetime>>,
     lvalue_action: LValueAction,
     borrow_lifetime: Lifetime, // Lifetime of the next encountered borrows
+    stored_type: bc_ast::Type, // Type of the stored value
+    borrow_deref: bool, // True when we are borrowing under a deref operator
     fun_sigs: &'a HashMap<Ident, typ_ast::FunSignature>
 }
 
@@ -213,7 +233,8 @@ impl<'a> Context<'a>
         Context { vars_by_lifetime: Vec::new(),
             lifetime_for_name: HashMap::new(), borrow_end: Vec::new(),
             mut_borrow_end: Vec::new(), lvalue_action: LValueAction::Move,
-            borrow_lifetime: Lifetime::max_value(), fun_sigs }
+            borrow_lifetime: Lifetime::max_value(),
+            stored_type: bc_ast::Type::Void, borrow_deref: false, fun_sigs }
     }
 
     /// Add the given variable to context
@@ -245,6 +266,19 @@ impl<'a> Context<'a>
         &self.vars_by_lifetime[var_lt].typ
     }
 
+    /**
+     * Restrict the type of the variable to the store type. This mean the
+     * variable will now have the most restrictive type between its own and
+     * ctx.stored_type. Return an error if the variable outlive the resulting
+     * type.
+     */
+    fn restrict_type(&mut self, name: Ident, loc: Span) -> Result<()>
+    {
+        let var_lt = self.get_lifetime(name);
+        let var_typ = &mut self.vars_by_lifetime[var_lt].typ;
+        restrict_type(var_typ, &self.stored_type, var_lt, loc, name)
+    }
+
     fn next_lifetime(&self) -> Lifetime
     {
         self.vars_by_lifetime.len()
@@ -257,8 +291,8 @@ impl<'a> Context<'a>
     }
 
     /// Borrow the given variable for the specified lifetime if possible
-    fn borrow_for(&mut self, name: Ident, lt: Lifetime, mutable_borrow: bool,
-                  loc: Span) -> Result<()>
+    fn borrow_for(&mut self, name: Ident, mut lt: Lifetime,
+                  mutable_borrow: bool, loc: Span) -> Result<()>
     {
         #[cfg(feature = "borrow_log")]
         print!("{}:\nBorrow {}{} for lifetime #{}\n\n", loc,
@@ -267,7 +301,17 @@ impl<'a> Context<'a>
         let var_lt = self.get_lifetime(name);
         if lt < var_lt
         {
-            return Err(Located::new(BorrowError::LifetimeTooShort(name), loc));
+            if self.borrow_deref
+            {
+                // No LifetimeTooShort error if we are under a deref,
+                // it will be checked with the reference lifetime.
+                lt = var_lt;
+            }
+            else
+            {
+                return Err(Located::new(BorrowError::LifetimeTooShort(name),
+                                        loc));
+            }
         }
 
         let info = self.vars_by_lifetime.get_mut(var_lt).unwrap();
@@ -533,10 +577,8 @@ fn check_instr(i: &typ_ast::LInstr, ctx: &mut Context)
             let new_val = check_expr(val, ctx)?;
             ctx.borrow_lifetime = Lifetime::max_value();
 
-            // Now put the correct type with the variable, if the type is a
-            // reference, change the lifetime to the new one.
-            ctx.vars_by_lifetime[new_lt].typ = replace_lifetime(&new_val.typ,
-                                                                new_lt);
+            // Now put the correct type with the variable
+            ctx.vars_by_lifetime[new_lt].typ = new_val.typ.clone();
 
             bc_ast::Instr::Let(*id, new_val)
         }
@@ -588,12 +630,9 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::Variable(ref id) =>
         {
-            expr = bc_ast::Expr::Variable(*id);
-            typ = ctx.get_type(id.data).clone();
-
             match ctx.lvalue_action
             {
-                LValueAction::Move if is_copy(&typ) =>
+                LValueAction::Move if is_copy(ctx.get_type(id.data)) =>
                 {
                     // Create a temporary borrow during the copy
                     ctx.borrow_for(id.data, Lifetime::max_value(), false,
@@ -616,10 +655,15 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
                 LValueAction::Reassign =>
                 {
                     ctx.replace_var(id.data, false, e.loc)?;
+                    ctx.restrict_type(id.data, e.loc)?;
                 }
                 LValueAction::PartialReassign =>
                 {
                     ctx.replace_var(id.data, true, e.loc)?;
+                }
+                LValueAction::StoreLifetime =>
+                {
+                    ctx.borrow_lifetime = ctx.get_lifetime(id.data);
                 }
                 LValueAction::Nothing if ctx.is_moved(id.data) =>
                 {
@@ -628,15 +672,21 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
                 }
                 LValueAction::Nothing => ()
             }
+
+            expr = bc_ast::Expr::Variable(*id);
+            typ = ctx.get_type(id.data).clone();
         }
         typ_ast::Expr::Assignment(ref var, ref val) =>
         {
-            ctx.lvalue_action = LValueAction::Reassign;
-            let new_var = check_expr(var, ctx)?;
+            ctx.lvalue_action = LValueAction::StoreLifetime;
+            check_expr(var, ctx)?;
 
             ctx.lvalue_action = LValueAction::Move;
-            ctx.borrow_lifetime = get_type_lifetime(&new_var.typ);
             let new_val = check_expr(val, ctx)?;
+            ctx.stored_type = new_val.typ.clone();
+
+            ctx.lvalue_action = LValueAction::Reassign;
+            let new_var = check_expr(var, ctx)?;
 
             check_type(&new_var.typ, &new_val.typ, e.loc)?;
 
@@ -737,6 +787,7 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         typ_ast::Expr::Deref(ref val) =>
         {
             let mut check_borrow_lifetime = false;
+            let old_borrow_deref = ctx.borrow_deref;
             if let LValueAction::Move = ctx.lvalue_action
             {
                 let result_typ = convert_type(&e.typ, e.loc)?;
@@ -763,11 +814,22 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
                 if let typ_ast::Type::Ref(_) = val.typ
                 {
                     ctx.lvalue_action = LValueAction::Nothing;
-                    check_borrow_lifetime = true;
                 }
+                else
+                {
+                    ctx.borrow_deref = true;
+                }
+                check_borrow_lifetime = true;
+            }
+            else if let LValueAction::BorrowMut = ctx.lvalue_action
+            {
+                ctx.borrow_deref = true;
+                check_borrow_lifetime = true;
             }
 
             let new_val = check_expr(val, ctx)?;
+
+            ctx.borrow_deref = old_borrow_deref;
 
             match *&new_val.typ
             {
@@ -788,7 +850,6 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         {
             ctx.lvalue_action = LValueAction::Borrow;
             let new_val = check_expr(val, ctx)?;
-            ctx.lvalue_action = LValueAction::Move;
 
             typ = bc_ast::Type::Ref(ctx.borrow_lifetime,
                                     Box::new(new_val.typ.clone()));
@@ -798,7 +859,6 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         {
             ctx.lvalue_action = LValueAction::BorrowMut;
             let new_val = check_expr(val, ctx)?;
-            ctx.lvalue_action = LValueAction::Move;
 
             typ = bc_ast::Type::MutRef(ctx.borrow_lifetime,
                                        Box::new(new_val.typ.clone()));
@@ -838,12 +898,10 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
         }
         typ_ast::Expr::VecConstr(ref values) =>
         {
-            // We can always replace the outmost reference lifetime by the
-            // lifetime of the current variable assigned to. It is not true for
-            // nested references though, in those case the type inference seem
-            // quite complicated (rustc seems to allow taking a reference before
-            // current scope for that). So I just reject nested references
-            // inside Vec.
+            // Here I make a simplification by always considering that the
+            // Vec type use the current borrow lifetime and that there is no
+            // nested references inside Vec. This does not violate any invariant
+            // but make a more restrictive borrow checker.
             typ = to_lifetimed_type(&e.typ, ctx.borrow_lifetime, e.loc)?;
 
             let data_typ = if let bc_ast::Type::Vector(ref t) = typ
@@ -954,8 +1012,11 @@ fn check_expr(e: &typ_ast::TExpr, ctx: &mut Context)
     }
 
     // Restore context lvalue action and borrow lifetime
-    ctx.lvalue_action = old_lvalue_action;
-    ctx.borrow_lifetime = old_borrow_lt;
+    if ctx.lvalue_action != LValueAction::StoreLifetime
+    {
+        ctx.lvalue_action = old_lvalue_action;
+        ctx.borrow_lifetime = old_borrow_lt;
+    }
 
     Ok(bc_ast::TExpr { data: expr, typ, mutable: e.mutable, lvalue: e.lvalue,
         always_return: e.always_return, loc: e.loc })
