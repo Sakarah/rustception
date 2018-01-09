@@ -1,40 +1,45 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use ast;
 use ast::Ident;
+use symbol::Symbol;
 
-enum Typ
+pub enum Typ
 {
     Struct(usize),
-    Vector(usize),
+    Vector,
     Primitive
 }
 
-struct Program
+pub struct Program
 {
-    funs: HashMap<Ident, Fun>,
-    structs: HashMap<Ident, Struct>
+    pub funs: HashMap<Ident, Fun>,
+    pub structs: HashMap<Ident, Struct>,
+    pub strings: HashSet<Symbol>,
 }
 
-struct Fun
+pub struct Fun
 {
-    args: HashMap<Ident, usize>,
-    body: Block,
+    pub args: HashMap<Ident, usize>,
+    pub body: Block,
+    pub body_stack_size: usize,
+    pub args_size: usize,
+    pub ret_typ: Typ,
 }
 
-struct Struct
+pub struct Struct
 {
-    size: usize,
-    fields: HashMap<Ident, usize>
+    pub size: usize,
+    pub fields: HashMap<Ident, usize>
 }
 
-struct Block
+pub struct Block
 {
-    instr: Vec<Instr>,
-    expr: Expr,
-    typ
+    pub instr: Vec<Instr>,
+    pub expr: Expr,
 }
 
-enum Instr
+pub enum Instr
 {
     Expression(Expr),
     Let(usize, Expr, Typ),
@@ -42,7 +47,7 @@ enum Instr
     Return(Expr),
 }
 
-enum Expr
+pub enum Expr
 {
     AssignLocal(Box<Expr>, Box<Expr>, Typ),
 
@@ -54,19 +59,17 @@ enum Expr
     Not(Box<Expr>),
     Ref(Box<Expr>),
     Deref(Box<Expr>),
-    MutRef(Box<Expr>),
 
-    // Last argument of the ArrayAccess is the size of the arguments.
-    ArrayAccess(Box<Expr>, Box<Expr>, usize),
+    ArrayAccess(Box<Expr>, Box<Expr>),
     Attribute(Box<Expr>, usize),
 
     Constant(isize),
     Variable(isize),
     FunctionCall(Ident, Vec<Expr>),
-    StructConstr(Vec<Expr>),
+    StructConstr(Vec<(Expr,usize)>),
     VecConstr(Vec<Expr>),
     VecLen(Box<Expr>),
-    Print(usize),
+    Print(Symbol),
     If(Box<Expr>, Box<Block>, Box<Block>),
     NestedBlock(Box<Block>)
 }
