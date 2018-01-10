@@ -32,9 +32,9 @@ chaîne correspondante.
 Ce module effectue le Lexing d'un fichier, transformant l'entrée en tokens. Pour
 cela, un automate minimaliste a été écrit à la main. Les deux fonctions
 utilitaires sont les suivantes :
-* `pub fn from_channel(channel: R, filename: String) -> Lexer<R> : construit un
+* `pub fn from_channel(channel: R, filename: String) -> Lexer<R>` : construit un
 lexer depuis un canal (fichier en l'occurrence, mais cela pourrait aussi être
-l'entrée standard) possédant le trait Read.
+l'entrée standard) possédant le trait `Read`.
 * La fonction `next` du trait Iterator, qui renvoie un token et sa localisation
 dans le fichier.
 
@@ -76,7 +76,7 @@ attributs à l'intérieur.
 * à la position indiquée par `%rbx` dans le cas d'une `struct` (on respecte
 le fait que `%rbx` est "callee saved".
 
-#### Allocation des ressources
+#### Allocation des ressources
 Avant d'écrire de l'assembleur, on transforme l'arbre annotée par le borrow
 checker pour récupérer les adresses relatives des ressources par rapport à
 `%rbp` et les décalages des champs dans les structs.
