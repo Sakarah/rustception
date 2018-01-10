@@ -388,9 +388,7 @@ fn allocate_funs(funs: &HashMap<Ident, bc_ast::Fun>, ctx: &mut Context)
             args.insert(arg.name.data, args_size);
             match arg.typ.data
             {
-                Type::Void | Type::Ref(_,_) | Type::MutRef(_,_) =>
-                    panic!("Found weird arguments in function definition that \
-                            another pass did not catch for unknown reason !"),
+                Type::Void | Type::Ref(_,_) | Type::MutRef(_,_) |
                 Type::Bool | Type::Int32 => args_size += 8,
                 Type::Vector(_) => args_size += 16,
                 Type::Struct(s_id) => match ctx.structs.get(&s_id)

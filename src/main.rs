@@ -79,4 +79,6 @@ fn main()
         |err| {
             eprintln!("{}", Error::WriteFileError(err));
             exit(2); });
+
+    exit(0);
 }

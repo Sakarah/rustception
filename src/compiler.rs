@@ -146,7 +146,7 @@ fn compile_instr<W:Write>(instr: &Instr, ctx: &mut Context<W>) -> Result<()>
 /**
  * Compiles the given expression :
  * Store its result in %rax if it is a primitive type.
- * Store in %rax and %rdx if it is a Vec.
+ * Store a heap pointer in %rax and size in %rdx if it is a Vec.
  * Store at position %rbx if it is a struct.
  */
 fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
@@ -316,7 +316,26 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
         Expr::Deref(ref e) =>
         {
             compile_expr(e, ctx)?;
-            write!(ctx.out, "    movq (%rax), %rax\n")?;
+            match expr.typ
+            {
+                Typ::Primitive =>
+                    write!(ctx.out, "    movq (%rax), %rax\n")?,
+                Typ::Vector =>
+                {
+                    write!(ctx.out, "    movq (%rax), %rax\n")?;
+                    write!(ctx.out, "    movq -8(%rax), %rdx\n")?;
+                }
+                Typ::Struct(size) =>
+                {
+                    let mut copied = 0;
+                    while copied < size
+                    {
+                        write!(ctx.out, "    movq -{}(%rax), %rdi\n", copied)?;
+                        write!(ctx.out, "    movq %rdi, -{}(%rbx)\n", copied)?;
+                        copied += 8;
+                    }
+                }
+            }
         }
         Expr::StructConstr(ref fields) =>
         {
@@ -338,7 +357,7 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
                         write!(ctx.out, "    movq %rax, -{}(%rbx)\n",
                                field_offset)?;
                         write!(ctx.out, "    movq %rdx, -{}(%rbx)\n",
-                               field_offset-8)?;
+                               field_offset+8)?;
                     }
                     Typ::Struct(_) =>
                     {
@@ -402,6 +421,94 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
             }
             write!(ctx.out, "    addq ${}, %rsp\n", struct_size)?;
         }
+        Expr::VecConstr(ref data_expr) =>
+        {
+            match data_expr.first()
+            {
+                Some(ref elem) =>
+                {
+                    let elem_size = typ_size(elem.typ);
+                    let vec_size = data_expr.len() * elem_size;
+
+                    write!(ctx.out, "    movq ${}, %rdi\n", vec_size)?;
+                    write!(ctx.out, "    call _malloc\n")?;
+                    write!(ctx.out, "    addq ${}, %rax\n", vec_size-8)?;
+
+                    let mut data_offset = 0;
+                    for e in data_expr
+                    {
+                        match e.typ
+                        {
+                            Typ::Primitive =>
+                            {
+                                write!(ctx.out, "    pushq %rax\n")?;
+                                compile_expr(e, ctx)?;
+                                write!(ctx.out, "    movq %rax, %rdi\n")?;
+                                write!(ctx.out, "    popq %rax\n")?;
+                                write!(ctx.out, "    movq %rdi, -{}(%rax)\n",
+                                       data_offset)?;
+                                data_offset += 8;
+                            }
+                            Typ::Vector =>
+                            {
+                                write!(ctx.out, "    pushq %rax\n")?;
+                                compile_expr(e, ctx)?;
+                                write!(ctx.out, "    movq %rax, %rdi\n")?;
+                                write!(ctx.out, "    popq %rax\n")?;
+                                write!(ctx.out, "    movq %rdi, -{}(%rax)\n",
+                                       data_offset)?;
+                                write!(ctx.out, "    movq %rdx, -{}(%rax)\n",
+                                       data_offset+8)?;
+                                data_offset += 16;
+                            }
+                            Typ::Struct(size) =>
+                            {
+                                write!(ctx.out, "    leaq -{}(%rax), %rbx\n",
+                                       data_offset)?;
+                                compile_expr(e, ctx)?;
+                                data_offset += size;
+                            }
+                        }
+                    }
+
+                    write!(ctx.out, "    movq ${}, %rdx\n", data_expr.len())?;
+                }
+                None =>
+                {
+                    write!(ctx.out, "    xorq %rax, %rax\n")?;
+                    write!(ctx.out, "    xorq %rdx, %rdx\n")?;
+                }
+            }
+        }
+        Expr::ArrayAccess(_, _) =>
+        {
+            compile_address(expr, ctx)?;
+            match expr.typ
+            {
+                Typ::Primitive =>
+                    write!(ctx.out, "    movq (%rax), %rax\n")?,
+                Typ::Vector =>
+                {
+                    write!(ctx.out, "    movq (%rax), %rax\n")?;
+                    write!(ctx.out, "    movq -8(%rax), %rdx\n")?;
+                }
+                Typ::Struct(size) =>
+                {
+                    let mut copied = 0;
+                    while copied < size
+                    {
+                        write!(ctx.out, "    movq -{}(%rax), %rdi\n", copied)?;
+                        write!(ctx.out, "    movq %rdi, -{}(%rbx)\n", copied)?;
+                        copied += 8;
+                    }
+                }
+            }
+        }
+        Expr::VecLen(ref expr) =>
+        {
+            compile_expr(expr, ctx)?;
+            write!(ctx.out, "    movq %rdx, %rax\n")?;
+        }
         Expr::Print(symbol) =>
         {
             let string = symbol.to_str();
@@ -425,7 +532,6 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
             write!(ctx.out, "{}:\n", endif_lbl)?;
         }
         Expr::NestedBlock(ref block) => compile_block(block, ctx)?,
-        _ => unimplemented!()
     }
     Ok(())
 }
@@ -459,10 +565,21 @@ fn compile_address<W: Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
             let data_size = typ_size(e.typ);
             compile_expr(i, ctx)?;
             write!(ctx.out, "    pushq %rax\n")?;
-            // TODO: Return an error if out of bound
+
             compile_expr(e, ctx)?; // A Vec is a pointer to heap memory
             write!(ctx.out, "    popq %rdi\n")?;
-            write!(ctx.out, "    leaq (%rax, %rdi, ${}), %rax\n", data_size)?;
+
+            write!(ctx.out, "    cmpq $0, %rdi\n")?;
+            write!(ctx.out, "    jl _panic\n")?;
+            write!(ctx.out, "    cmpq %rdx, %rdi\n")?;
+            write!(ctx.out, "    jge _panic\n")?;
+
+            if data_size != 8
+            {
+                write!(ctx.out, "    imulq ${}, %rdi\n", data_size/8)?;
+            }
+
+            write!(ctx.out, "    leaq (%rax, %rdi, 8), %rax\n")?;
         }
         _ => panic!("Try to compute the address of a rvalue")
     }
