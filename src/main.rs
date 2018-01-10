@@ -10,7 +10,9 @@ mod borrow_checker;
 mod error;
 mod alloc_ast;
 mod allocator;
+mod compiler;
 
+use std::path::PathBuf;
 use std::fs::File;
 use lexer::Lexer;
 use error::Error;
@@ -21,7 +23,7 @@ extern crate lalrpop_util;
 fn main()
 {
     // Read the command line
-    let mut filename = String::new();
+    let mut input_filename_opt = None;
     let mut parse_only = false;
     let mut type_only = false;
     let mut no_asm = false;
@@ -32,20 +34,22 @@ fn main()
             "--parse-only" => parse_only = true,
             "--type-only" => type_only = true,
             "--no-asm" => no_asm = true,
-            _ => filename = arg
+            _ => input_filename_opt = Some(PathBuf::from(arg))
         }
     }
-    if filename == ""
-    {
+
+    let input_filename = input_filename_opt.unwrap_or_else(|| {
         eprintln!("{}", Error::NoInputFile);
-        exit(1);
-    }
+        exit(2);
+    });
 
     // Parse the file
-    let file = File::open(&filename).unwrap_or_else(|err| {
-        eprintln!("{}", Error::OpenFileError(filename.clone(), err));
-        exit(1); });
-    let lexer = Lexer::from_channel(file, filename);
+    let file = File::open(&input_filename).unwrap_or_else(|err| {
+        eprintln!("{}", Error::OpenFileError(input_filename.clone(), err));
+        exit(2); });
+    let filesym = input_filename.clone().into_os_string().into_string()
+        .unwrap();
+    let lexer = Lexer::from_channel(file, filesym);
     let prgm = parser::parse_Program(lexer).unwrap_or_else(|err| {
         eprintln!("{}", Error::ParsingError(err));
         exit(1); });
@@ -67,4 +71,12 @@ fn main()
     let alloc_prgm = allocator::allocate_program(bc_prgm);
 
     // Produce assembly
+    let output_filename = input_filename.with_extension("s");
+    let mut output_file = File::create(&output_filename).unwrap_or_else(|err| {
+        eprintln!("{}", Error::OpenFileError(output_filename.clone(), err));
+        exit(2); });
+    compiler::compile_program(&alloc_prgm, &mut output_file).unwrap_or_else(
+        |err| {
+            eprintln!("{}", Error::WriteFileError(err));
+            exit(2); });
 }

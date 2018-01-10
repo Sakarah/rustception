@@ -1,4 +1,5 @@
 use std::io;
+use std::path;
 use std::fmt;
 use lexer::{LexingError,Token};
 use lalrpop_util::ParseError;
@@ -9,7 +10,8 @@ use location::{Location,Span,Located};
 pub enum Error
 {
     NoInputFile,
-    OpenFileError(String, io::Error),
+    OpenFileError(path::PathBuf, io::Error),
+    WriteFileError(io::Error),
     ParsingError(ParseError<Location, Token, LexingError>),
     TypingError(Located<TypingError>),
     BorrowCheckingError(Located<BorrowError>),
@@ -24,7 +26,10 @@ impl fmt::Display for Error
             Error::NoInputFile =>
                 write!(f, "You must give a filename as argument"),
             Error::OpenFileError(ref filename, ref err) =>
-                write!(f, "Unable to open file \"{}\": {}", filename, err),
+                write!(f, "Unable to open file \"{}\": {}",
+                       filename.display(), err),
+            Error::WriteFileError(ref err) =>
+                write!(f, "Unable to write output: {}", err),
             Error::ParsingError(ref err) =>
             {
                 match *err

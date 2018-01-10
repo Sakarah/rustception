@@ -98,15 +98,15 @@ fn typ(t: &bc_ast::Type, ctx: &mut Context) -> Typ
     }
 }
 
-fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
+fn allocate_expr(expr: &bc_ast::TExpr, ctx: &mut Context) -> (TExpr, usize)
 {
     /*  We have to remember where to fall back after the expression is
     *   processed.
     */
-    let e : Expr;
-    let mut max_size = 0;
+    let e;
+    let mut max_size = ctx.stack_size;
 
-    match *expr
+    match expr.data
     {
         bc_ast::Expr::Constant(c) => match c
         {
@@ -124,12 +124,11 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
 
         bc_ast::Expr::Assignment(ref expr_to, ref expr_from) =>
         {
-            let (e_to, max_size_1) = allocate_expr(&expr_to.data, ctx);
-            let (e_from, max_size_2) = allocate_expr(&expr_from.data, ctx);
+            let (e_to, max_size_1) = allocate_expr(expr_to, ctx);
+            let (e_from, max_size_2) = allocate_expr(expr_from, ctx);
             max_size = if max_size_1 > max_size_2 {max_size_1}
                        else {max_size_2};
-            let expr_typ = typ(&expr_to.typ, ctx);
-            e = AssignLocal(Box::new(e_to), Box::new(e_from), expr_typ)
+            e = AssignLocal(Box::new(e_to), Box::new(e_from))
         },
 
         bc_ast::Expr::FunctionCall(l_id, ref t_args) =>
@@ -137,7 +136,7 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
             let mut allocated_args = Vec::new();
             for arg in t_args
             {
-                let (allocated_expr, used_size) = allocate_expr(&arg.data, ctx);
+                let (allocated_expr, used_size) = allocate_expr(arg, ctx);
                 allocated_args.push(allocated_expr);
                 max_size = used_size;
             }
@@ -146,52 +145,52 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
 
         bc_ast::Expr::Logic(logic_op, ref t_expr_1, ref t_expr_2) =>
         {
-            let (e1, max_size_1) = allocate_expr(&t_expr_1.data, ctx);
-            let (e2, max_size_2) = allocate_expr(&t_expr_2.data, ctx);
+            let (e1, max_size_1) = allocate_expr(t_expr_1, ctx);
+            let (e2, max_size_2) = allocate_expr(t_expr_2, ctx);
             e = Logic(logic_op, Box::new(e1), Box::new(e2));
             max_size = if max_size_1 > max_size_2 {max_size_1} else {max_size_2}
         },
 
         bc_ast::Expr::Comparison(comp_op, ref t_expr_1, ref t_expr_2) =>
         {
-            let (e1, max_size_1) = allocate_expr(&t_expr_1.data, ctx);
-            let (e2, max_size_2) = allocate_expr(&t_expr_2.data, ctx);
+            let (e1, max_size_1) = allocate_expr(t_expr_1, ctx);
+            let (e2, max_size_2) = allocate_expr(t_expr_2, ctx);
             e = Comparison(comp_op, Box::new(e1), Box::new(e2));
             max_size = if max_size_1 > max_size_2 {max_size_1} else {max_size_2}
         },
 
         bc_ast::Expr::Arithmetic(arith_op, ref t_expr_1, ref t_expr_2) =>
         {
-            let (e1, max_size_1) = allocate_expr(&t_expr_1.data, ctx);
-            let (e2, max_size_2) = allocate_expr(&t_expr_2.data, ctx);
+            let (e1, max_size_1) = allocate_expr(t_expr_1, ctx);
+            let (e2, max_size_2) = allocate_expr(t_expr_2, ctx);
             e = Arithmetic(arith_op, Box::new(e1), Box::new(e2));
             max_size = if max_size_1 > max_size_2 {max_size_1} else {max_size_2}
         },
 
         bc_ast::Expr::Minus(ref t_expr) =>
         {
-            let (expr, used_size) = allocate_expr(&t_expr.data, ctx);
+            let (expr, used_size) = allocate_expr(t_expr, ctx);
             e = Minus(Box::new(expr));
             max_size = used_size
         },
 
         bc_ast::Expr::Not(ref t_expr) =>
         {
-            let (expr, used_size) = allocate_expr(&t_expr.data, ctx);
+            let (expr, used_size) = allocate_expr(t_expr, ctx);
             e = Not(Box::new(expr));
             max_size = used_size
         },
 
         bc_ast::Expr::Deref(ref t_expr) =>
         {
-            let (expr, used_size) = allocate_expr(&t_expr.data, ctx);
+            let (expr, used_size) = allocate_expr(t_expr, ctx);
             e = Deref(Box::new(expr));
             max_size = used_size
         },
 
         bc_ast::Expr::Ref(ref t_expr) | bc_ast::Expr::MutRef(ref t_expr) =>
         {
-            let (expr, used_size) = allocate_expr(&t_expr.data, ctx);
+            let (expr, used_size) = allocate_expr(t_expr, ctx);
             e = Expr::Ref(Box::new(expr));
             max_size = used_size
         }
@@ -207,7 +206,7 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
                     {
                         Some(&loc) => {
                             let (expr, used_size) = allocate_expr(
-                                &t_expr.data, ctx);
+                                t_expr, ctx);
                             allocated_attr.push((expr, loc));
                             max_size = if used_size > max_size {used_size}
                                        else {max_size}
@@ -233,8 +232,7 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
                     Some(s) => match s.fields.get(&l_id_attr.data)
                     {
                         Some(&loc) => {
-                            let (expr, used_size) = allocate_expr(
-                                &t_expr.data, ctx);
+                            let (expr, used_size) = allocate_expr(t_expr, ctx);
                             e = Attribute(Box::new(expr), loc);
                             max_size = used_size
                         },
@@ -253,7 +251,7 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
             let mut allocated_vec = Vec::new();
             for t_expr in t_elements
             {
-                let (expr, used_size) = allocate_expr(&t_expr.data, ctx);
+                let (expr, used_size) = allocate_expr(t_expr, ctx);
                 max_size = if used_size > max_size {used_size} else {max_size};
                 allocated_vec.push(expr);
             }
@@ -262,16 +260,15 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
 
         bc_ast::Expr::ArrayAccess(ref t_expr_array, ref t_expr_pos) =>
         {
-            let (array, used_size_array) = allocate_expr(
-                &t_expr_array.data, ctx);
-            let (pos, used_size_pos) = allocate_expr(&t_expr_pos.data, ctx);
+            let (array, used_size_array) = allocate_expr(t_expr_array, ctx);
+            let (pos, used_size_pos) = allocate_expr(t_expr_pos, ctx);
             max_size = max(used_size_pos, used_size_array);
             e = ArrayAccess(Box::new(array), Box::new(pos))
         },
 
         bc_ast::Expr::VecLen(ref t_expr) =>
         {
-            let (vec, used_size) = allocate_expr(&t_expr.data, ctx);
+            let (vec, used_size) = allocate_expr(t_expr, ctx);
             e = VecLen(Box::new(vec));
             max_size = used_size
         },
@@ -285,7 +282,7 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
         bc_ast::Expr::If(ref condition_expr, ref if_block, ref else_block) =>
         {
             let (condition, size_condition) = allocate_expr(
-                &condition_expr.data, ctx);
+                condition_expr, ctx);
             let (alloc_if_block, size_if)  = allocate_block(&if_block, ctx);
             let (alloc_else_block,size_else) = allocate_block(&else_block, ctx);
             max_size = max(max(size_condition, size_if), size_else);
@@ -301,7 +298,7 @@ fn allocate_expr(expr: &bc_ast::Expr, ctx: &mut Context) -> (Expr, usize)
         }
     }
 
-    (e, max_size)
+    (TExpr { data: e, typ: typ(&expr.typ, ctx) }, max_size)
 }
 
 fn allocate_instr(instr: &bc_ast::Instr, ctx: &mut Context) -> (Instr, usize)
@@ -310,13 +307,13 @@ fn allocate_instr(instr: &bc_ast::Instr, ctx: &mut Context) -> (Instr, usize)
     {
         bc_ast::Instr::Expression(ref t_expr) =>
         {
-            let (e, used_size) = allocate_expr(&t_expr.data, ctx);
+            let (e, used_size) = allocate_expr(t_expr, ctx);
             (Instr::Expression(e), used_size)
         }
 
         bc_ast::Instr::Let(l_id, ref t_expr) =>
         {
-            let allocated_point = ctx.stack_size;
+            let allocated_point = -(ctx.stack_size as isize);
             ctx.stack_size += match t_expr.typ
             {
                 Type::Void | Type::Int32 | Type::Bool | Type::Ref(_,_) |
@@ -328,15 +325,14 @@ fn allocate_instr(instr: &bc_ast::Instr, ctx: &mut Context) -> (Instr, usize)
                     None => panic!("I can't find struct {} definition", s_id)
                 }
             };
-            let (e, used_size) = allocate_expr(&t_expr.data, ctx);
-            ctx.local_env.insert(l_id.data, allocated_point as isize);
-            let expr_typ = typ(&t_expr.typ, ctx);
-            (Instr::Let(allocated_point, e, expr_typ), used_size)
+            let (e, used_size) = allocate_expr(t_expr, ctx);
+            ctx.local_env.insert(l_id.data, allocated_point);
+            (Instr::Let(allocated_point, e), used_size)
         }
 
         bc_ast::Instr::While(ref t_cond_expr, ref instr_block) =>
         {
-            let (cond_expr, expr_size) = allocate_expr(&t_cond_expr.data, ctx);
+            let (cond_expr, expr_size) = allocate_expr(t_cond_expr, ctx);
             let (instr_block, block_size) =
                 allocate_block(&instr_block, ctx);
             (
@@ -347,7 +343,7 @@ fn allocate_instr(instr: &bc_ast::Instr, ctx: &mut Context) -> (Instr, usize)
 
         bc_ast::Instr::Return(ref t_expr) =>
         {
-            let (e, used_size) = allocate_expr(&t_expr.data, ctx);
+            let (e, used_size) = allocate_expr(t_expr, ctx);
             (Instr::Return(e), used_size)
         }
     }
@@ -358,25 +354,23 @@ fn allocate_block(block: &bc_ast::Block, ctx: &mut Context) -> (Block, usize)
     // Copy the former local environment in order to backup.
     let local_env_backup = ctx.local_env.clone();
     let stack_size_backup = ctx.stack_size;
-    ctx.stack_size = 0;
 
     let mut instructions = Vec::new();
-    let mut max_instr_size = 0;
+    let mut max_instr_size = ctx.stack_size;
     for l_instr in &block.instr
     {
         let (instr, instr_size) = allocate_instr(&l_instr.data, ctx);
         instructions.push(instr);
         max_instr_size = max(max_instr_size, instr_size)
     }
-    let (e, size) = allocate_expr(&block.expr.data, ctx);
+    let (e, size) = allocate_expr(&block.expr, ctx);
     max_instr_size = max(max_instr_size, size);
 
-    let block_stack_size = ctx.stack_size;
     // Backup the end of the stack
     ctx.stack_size = stack_size_backup;
     ctx.local_env = local_env_backup;
 
-    (Block { instr: instructions, expr: e }, block_stack_size + max_instr_size)
+    (Block { instr: instructions, expr: e }, max_instr_size)
 }
 
 fn allocate_funs(funs: &HashMap<Ident, bc_ast::Fun>, ctx: &mut Context)
@@ -406,26 +400,13 @@ fn allocate_funs(funs: &HashMap<Ident, bc_ast::Fun>, ctx: &mut Context)
                                     {} definition. Aborting !", s_id, id),
                 }
             }
-            ctx.local_env.insert(arg.name.data, args_size as isize);
+            ctx.local_env.insert(arg.name.data, 8+args_size as isize);
         }
 
-        let (body, body_stack_size) = allocate_block(&f.body, ctx);
-
-        let ret_typ = match f.sig.return_type.data
-        {
-            Type::Void | Type::Int32 | Type::Bool => Typ::Primitive,
-            Type::Ref(_,_) | Type::MutRef(_,_) => panic!("You shall not pass"),
-            Type::Vector(_) => Typ::Vector,
-            Type::Struct(s_id) => match ctx.structs.get(&s_id)
-            {
-                Some(s) => Typ::Struct(s.size),
-                None => panic!("Function {} return an unknown struct {}",
-                                id, s_id)
-            }
-        };
+        let (body, fun_stack_size) = allocate_block(&f.body, ctx);
 
         allocated_funs.insert(*id,
-            Fun { args, body, body_stack_size, ret_typ, args_size } );
+            Fun { args, body, body_stack_size: fun_stack_size-8, args_size } );
     }
 
     allocated_funs
@@ -439,7 +420,7 @@ pub fn allocate_program(prgm: bc_ast::Program) -> Program
     {
         let mut ctx = Context
         {
-            stack_size : 0,
+            stack_size : 8, // We must reserve space for old %rbp
             structs : &structs,
             strings : HashSet::new(),
             local_env : HashMap::new()

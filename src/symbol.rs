@@ -21,7 +21,7 @@ use std::marker::PhantomData;
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Symbol
 {
-    id: usize,
+    pub id: usize,
     dummy: PhantomData<*const str> // Disable Sync and Send
 }
 

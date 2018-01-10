@@ -4,11 +4,12 @@ use ast;
 use ast::Ident;
 use symbol::Symbol;
 
+#[derive(Clone, Copy)]
 pub enum Typ
 {
-    Struct(usize),
+    Primitive,
     Vector,
-    Primitive
+    Struct(usize),
 }
 
 pub struct Program
@@ -24,7 +25,6 @@ pub struct Fun
     pub body: Block,
     pub body_stack_size: usize,
     pub args_size: usize,
-    pub ret_typ: Typ,
 }
 
 pub struct Struct
@@ -36,40 +36,48 @@ pub struct Struct
 pub struct Block
 {
     pub instr: Vec<Instr>,
-    pub expr: Expr,
+    pub expr: TExpr,
 }
 
 pub enum Instr
 {
-    Expression(Expr),
-    Let(usize, Expr, Typ),
-    While(Expr, Box<Block>),
-    Return(Expr),
+    Expression(TExpr),
+    Let(isize, TExpr),
+    While(TExpr, Box<Block>),
+    Return(TExpr),
+}
+
+pub struct TExpr
+{
+    pub data: Expr,
+    pub typ: Typ
 }
 
 pub enum Expr
 {
-    AssignLocal(Box<Expr>, Box<Expr>, Typ),
-
-    Logic(ast::LogicOp, Box<Expr>, Box<Expr>),
-    Comparison(ast::Comp, Box<Expr>, Box<Expr>),
-    Arithmetic(ast::ArithOp, Box<Expr>, Box<Expr>),
-
-    Minus(Box<Expr>),
-    Not(Box<Expr>),
-    Ref(Box<Expr>),
-    Deref(Box<Expr>),
-
-    ArrayAccess(Box<Expr>, Box<Expr>),
-    Attribute(Box<Expr>, usize),
-
     Constant(isize),
     Variable(isize),
-    FunctionCall(Ident, Vec<Expr>),
-    StructConstr(Vec<(Expr,usize)>),
-    VecConstr(Vec<Expr>),
-    VecLen(Box<Expr>),
+    AssignLocal(Box<TExpr>, Box<TExpr>),
+    FunctionCall(Ident, Vec<TExpr>),
+
+    Logic(ast::LogicOp, Box<TExpr>, Box<TExpr>),
+    Comparison(ast::Comp, Box<TExpr>, Box<TExpr>),
+    Arithmetic(ast::ArithOp, Box<TExpr>, Box<TExpr>),
+    Minus(Box<TExpr>),
+    Not(Box<TExpr>),
+
+    Ref(Box<TExpr>),
+    Deref(Box<TExpr>),
+
+    StructConstr(Vec<(TExpr,usize)>), // usize = field offset
+    Attribute(Box<TExpr>, usize), // struct_expr, field_off
+
+    VecConstr(Vec<TExpr>),
+    ArrayAccess(Box<TExpr>, Box<TExpr>),
+    VecLen(Box<TExpr>),
+
     Print(Symbol),
-    If(Box<Expr>, Box<Block>, Box<Block>),
+
+    If(Box<TExpr>, Box<Block>, Box<Block>),
     NestedBlock(Box<Block>)
 }
