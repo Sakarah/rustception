@@ -10,7 +10,17 @@ _start:
     mov $60, %rax # syscall 60 = exit
     syscall
 
+_out_of_range_panic:
+    movq $1, %rax
+    movq $2, %rdi
+    movq $_out_of_range_msg, %rsi
+    movq $28, %rdx
+    syscall
 _panic:
     mov $1, %rdi
     mov $60, %rax
     syscall
+
+    .data
+_out_of_range_msg:
+    .string "Array access out of range !\n"

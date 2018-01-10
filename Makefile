@@ -1,7 +1,7 @@
 all: build prustc
 
 build: asm/prust_base.s
-	cargo build
+	cargo build --release
 
 asm/mm.s: asm/mm.c
 	gcc $^ -S -o $@
@@ -10,7 +10,7 @@ asm/prust_base.s: asm/sbrk.s asm/mm.s asm/start.s
 	cat $^ > $@
 
 prustc:
-	ln -s target/debug/rustception prustc
+	ln -s target/release/rustception prustc
 
 test: all
 	cd tests && ./test.sh -all ../prustc
