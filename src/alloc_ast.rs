@@ -50,7 +50,8 @@ pub enum Instr
 pub struct TExpr
 {
     pub data: Expr,
-    pub typ: Typ
+    pub typ: Typ,
+    pub lvalue: bool
 }
 
 pub enum Expr

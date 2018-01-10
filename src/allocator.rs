@@ -298,7 +298,7 @@ fn allocate_expr(expr: &bc_ast::TExpr, ctx: &mut Context) -> (TExpr, usize)
         }
     }
 
-    (TExpr { data: e, typ: typ(&expr.typ, ctx) }, max_size)
+    (TExpr { data: e, typ: typ(&expr.typ, ctx), lvalue: expr.lvalue }, max_size)
 }
 
 fn allocate_instr(instr: &bc_ast::Instr, ctx: &mut Context) -> (Instr, usize)

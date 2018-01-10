@@ -37,7 +37,7 @@ pub fn compile_program<W:Write>(prgm: &Program, out: &mut W) -> Result<()>
 {
     let mut ctx = Context { out, prgm, label:0 };
     write!(ctx.out, "    .text\n")?;
-    for (fname, fu-n) in &prgm.funs
+    for (fname, fun) in &prgm.funs
     {
         write!(ctx.out, "    .p2align 4\n")?;
         write!(ctx.out, "{}:\n", fname)?;
@@ -370,56 +370,69 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
         }
         Expr::Attribute(ref struct_expr, field_offset) =>
         {
-            let struct_size = match struct_expr.typ
-            {
-                Typ::Struct(s) => s,
-                _ => panic!("Attribute used on non struct during compile_expr")
-            };
+            let struct_size;
 
-            if let Typ::Struct(_) = expr.typ
+            if struct_expr.lvalue
             {
-                write!(ctx.out, "    movq %rbx, %rdx\n")?;
+                compile_address(struct_expr, ctx)?;
+                struct_size = 0;
+            }
+            else
+            {
+                struct_size = match struct_expr.typ
+                {
+                    Typ::Struct(s) => s,
+                    _ => panic!("Attribute used on non struct during compile_expr")
+                };
+
+                write!(ctx.out, "    leaq -8(%rsp), %rax\n")?;
+                write!(ctx.out, "    subq ${}, %rsp\n", struct_size)?;
+
+                if let Typ::Struct(_) = expr.typ
+                {
+                    // If we are making a struct, we must save %rbx
+                    write!(ctx.out, "    pushq %rbx\n")?;
+                }
+                write!(ctx.out, "    movq %rax, %rbx\n")?;
+
+                compile_expr(struct_expr, ctx)?;
             }
 
-            write!(ctx.out, "    leaq -8(%rsp), %rbx\n")?;
-            write!(ctx.out, "    subq ${}, %rsp\n", struct_size)?;
 
-            if let Typ::Struct(_) = expr.typ
-            {
-                // If we are making a struct, we must save %rbx
-                write!(ctx.out, "    pushq %rdx\n")?;
-            }
-
-            compile_expr(struct_expr, ctx)?;
             match expr.typ
             {
                 Typ::Primitive =>
-                    write!(ctx.out, "    movq -{}(%rbx), %rax\n",
+                    write!(ctx.out, "    movq -{}(%rax), %rax\n",
                            field_offset)?,
                 Typ::Vector =>
                 {
-                    write!(ctx.out, "    movq -{}(%rbx), %rax\n",
-                           field_offset)?;
-                    write!(ctx.out, "    movq -{}(%rbx), %rdx\n",
+                    write!(ctx.out, "    movq -{}(%rax), %rdx\n",
                            field_offset+8)?;
+                    write!(ctx.out, "    movq -{}(%rax), %rax\n",
+                           field_offset)?;
                 }
                 Typ::Struct(size) =>
                 {
-                    write!(ctx.out, "    movq %rbx, %rdx\n")?;
-                    write!(ctx.out, "    popq %rbx\n")?;
-                    // Here %rdx is the position of the generated struct,
+                    if !struct_expr.lvalue
+                    {
+                        write!(ctx.out, "    popq %rbx\n")?;
+                    }
+                    // Here %rax is the position of the generated struct,
                     // %rbx is the wanted sub-struct position
                     let mut copied = 0;
                     while copied < size
                     {
-                        write!(ctx.out, "    movq -{}(%rdx), %rax\n",
+                        write!(ctx.out, "    movq -{}(%rax), %rdx\n",
                                copied + field_offset)?;
-                        write!(ctx.out, "    movq %rax, -{}(%rbx)\n", copied)?;
+                        write!(ctx.out, "    movq %rdx, -{}(%rbx)\n", copied)?;
                         copied += 8;
                     }
                 }
             }
-            write!(ctx.out, "    addq ${}, %rsp\n", struct_size)?;
+            if !struct_expr.lvalue
+            {
+                write!(ctx.out, "    addq ${}, %rsp\n", struct_size)?;
+            }
         }
         Expr::VecConstr(ref data_expr) =>
         {
