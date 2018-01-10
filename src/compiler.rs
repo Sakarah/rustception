@@ -37,7 +37,7 @@ pub fn compile_program<W:Write>(prgm: &Program, out: &mut W) -> Result<()>
 {
     let mut ctx = Context { out, prgm, label:0 };
     write!(ctx.out, "    .text\n")?;
-    for (fname, fun) in &prgm.funs
+    for (fname, fu-n) in &prgm.funs
     {
         write!(ctx.out, "    .p2align 4\n")?;
         write!(ctx.out, "{}:\n", fname)?;
@@ -322,8 +322,8 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
                     write!(ctx.out, "    movq (%rax), %rax\n")?,
                 Typ::Vector =>
                 {
-                    write!(ctx.out, "    movq (%rax), %rax\n")?;
                     write!(ctx.out, "    movq -8(%rax), %rdx\n")?;
+                    write!(ctx.out, "    movq (%rax), %rax\n")?;
                 }
                 Typ::Struct(size) =>
                 {
@@ -489,8 +489,8 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
                     write!(ctx.out, "    movq (%rax), %rax\n")?,
                 Typ::Vector =>
                 {
-                    write!(ctx.out, "    movq (%rax), %rax\n")?;
                     write!(ctx.out, "    movq -8(%rax), %rdx\n")?;
+                    write!(ctx.out, "    movq (%rax), %rax\n")?;
                 }
                 Typ::Struct(size) =>
                 {
@@ -562,7 +562,7 @@ fn compile_address<W: Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
         }
         Expr::ArrayAccess(ref e, ref i) =>
         {
-            let data_size = typ_size(e.typ);
+            let data_size = typ_size(expr.typ);
             compile_expr(i, ctx)?;
             write!(ctx.out, "    pushq %rax\n")?;
 
@@ -574,6 +574,7 @@ fn compile_address<W: Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
             write!(ctx.out, "    cmpq %rdx, %rdi\n")?;
             write!(ctx.out, "    jge _panic\n")?;
 
+            write!(ctx.out, "    negq %rdi\n")?;
             if data_size != 8
             {
                 write!(ctx.out, "    imulq ${}, %rdi\n", data_size/8)?;
