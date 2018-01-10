@@ -39,46 +39,39 @@
 #define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 /* Global variables */
-static char *heap_listp = 0;  /* Pointer to first block */
-#ifdef NEXT_FIT
-static char *rover;           /* Next fit rover */
-#endif
+static char *_heap_listp = 0;  /* Pointer to first block */
 
-extern void *sbrk(size_t increment); // <- Written in assembly in sbrk.s
+extern void *_sbrk(size_t increment); // <- Written in assembly in sbrk.s
 
 /* Function prototypes for internal helper routines */
-static void *extend_heap(size_t words);
-static void place(void *bp, size_t asize);
-static void *find_fit(size_t asize);
-static void *coalesce(void *bp);
+static void *_extend_heap(size_t words);
+static void _place(void *bp, size_t asize);
+static void *_find_fit(size_t asize);
+static void *_coalesce(void *bp);
 
 /*
  * mm_init - Initialize the memory manager
  * MUST be called before any call to malloc or free !
  */
-void mm_init(void)
+void _mm_init(void)
 {
     /* Create the initial empty heap */
-    if ((heap_listp = sbrk(4*WSIZE)) == (void *)-1)
+    if ((_heap_listp = _sbrk(4*WSIZE)) == (void *)-1)
         return;
-    PUT(heap_listp, 0);                          /* Alignment padding */
-    PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
-    PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
-    PUT(heap_listp + (3*WSIZE), PACK(0, 1));     /* Epilogue header */
-    heap_listp += (2*WSIZE);
-
-#ifdef NEXT_FIT
-    rover = heap_listp;
-#endif
+    PUT(_heap_listp, 0);                          /* Alignment padding */
+    PUT(_heap_listp + (1*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
+    PUT(_heap_listp + (2*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
+    PUT(_heap_listp + (3*WSIZE), PACK(0, 1));     /* Epilogue header */
+    _heap_listp += (2*WSIZE);
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
-    extend_heap(CHUNKSIZE/WSIZE);
+    _extend_heap(CHUNKSIZE/WSIZE);
 }
 
 /*
  * malloc - Allocate a block with at least size bytes of payload
  */
-void *malloc(size_t size)
+void* _malloc(size_t size)
 {
     size_t asize;      /* Adjusted block size */
     size_t extendsize; /* Amount to extend heap if no fit */
@@ -95,23 +88,23 @@ void *malloc(size_t size)
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
 
     /* Search the free list for a fit */
-    if ((bp = find_fit(asize)) != NULL) {
-        place(bp, asize);
+    if ((bp = _find_fit(asize)) != NULL) {
+        _place(bp, asize);
         return bp;
     }
 
     /* No fit found. Get more memory and place the block */
     extendsize = MAX(asize,CHUNKSIZE);
-    if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
+    if ((bp = _extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;
-    place(bp, asize);
+    _place(bp, asize);
     return bp;
 }
 
 /*
  * free - Free a block
  */
-void free(void *bp)
+void _free(void *bp)
 {
     if (bp == 0)
         return;
@@ -120,13 +113,13 @@ void free(void *bp)
 
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
-    coalesce(bp);
+    _coalesce(bp);
 }
 
 /*
  * coalesce - Boundary tag coalescing. Return ptr to coalesced block
  */
-static void *coalesce(void *bp)
+static void *_coalesce(void *bp)
 {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
@@ -156,12 +149,6 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
-#ifdef NEXT_FIT
-    /* Make sure the rover isn't pointing into the free block */
-    /* that we just coalesced */
-    if ((rover > (char *)bp) && (rover < NEXT_BLKP(bp)))
-        rover = bp;
-#endif
     return bp;
 }
 
@@ -172,14 +159,14 @@ static void *coalesce(void *bp)
 /*
  * extend_heap - Extend heap with free block and return its block pointer
  */
-static void *extend_heap(size_t words)
+static void *_extend_heap(size_t words)
 {
     char *bp;
     size_t size;
 
     /* Allocate an even number of words to maintain alignment */
     size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
-    if ((long)(bp = sbrk(size)) == -1)
+    if ((long)(bp = _sbrk(size)) == -1)
         return NULL;
 
     /* Initialize free block header/footer and the epilogue header */
@@ -188,14 +175,14 @@ static void *extend_heap(size_t words)
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
 
     /* Coalesce if the previous block was free */
-    return coalesce(bp);
+    return _coalesce(bp);
 }
 
 /*
  * place - Place block of asize bytes at start of free block bp
  *         and split if remainder would be at least minimum block size
  */
-static void place(void *bp, size_t asize)
+static void _place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
 
@@ -215,33 +202,16 @@ static void place(void *bp, size_t asize)
 /*
  * find_fit - Find a fit for a block with asize bytes
  */
-static void *find_fit(size_t asize)
+static void *_find_fit(size_t asize)
 {
-#ifdef NEXT_FIT
-    /* Next fit search */
-    char *oldrover = rover;
-
-    /* Search from the rover to the end of list */
-    for ( ; GET_SIZE(HDRP(rover)) > 0; rover = NEXT_BLKP(rover))
-        if (!GET_ALLOC(HDRP(rover)) && (asize <= GET_SIZE(HDRP(rover))))
-            return rover;
-
-    /* search from start of list to old rover */
-    for (rover = heap_listp; rover < oldrover; rover = NEXT_BLKP(rover))
-        if (!GET_ALLOC(HDRP(rover)) && (asize <= GET_SIZE(HDRP(rover))))
-            return rover;
-
-    return NULL;  /* no fit found */
-#else
     /* First-fit search */
     void *bp;
 
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+    for (bp = _heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
             return bp;
         }
     }
     return NULL; /* No fit */
-#endif
 }
 

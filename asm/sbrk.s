@@ -3,8 +3,7 @@
     .text
 
 # Must be called once before any sbrk call
-    .globl brk_init
-brk_init:
+_brk_init:
     movq $12, %rax  # Syscall 12 = brk
     movq $0, %rdi   # Do not request any memory
     syscall
@@ -14,8 +13,7 @@ brk_init:
 # Extend the process's data space by %rdi (increment).
 # If %rdi is negative, shrink data space by -%rdi.
 # Return start of new space allocated, or -1 for errors.
-    .globl sbrk
-sbrk:
+_sbrk:
     movq cur_brk, %rdx # Save the old cur_brk (it is the start of new space)
     addq %rdx, %rdi # Compute the expected new brk (increment + cur_brk)
     movq $12, %rax  # Syscall 12 = brk
