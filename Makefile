@@ -6,7 +6,7 @@ build: asm/prust_base.s
 asm/mm.s: asm/mm.c
 	gcc $^ -S -o $@
 
-asm/prust_base.s: asm/print.s asm/sbrk.s asm/mm.s asm/start.s
+asm/prust_base.s: asm/sbrk.s asm/mm.s asm/start.s
 	cat $^ > $@
 
 prustc:
