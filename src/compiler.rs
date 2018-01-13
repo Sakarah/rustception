@@ -15,7 +15,7 @@ impl<'a, W> Context<'a, W>
 {
     fn gen_unique_label(&mut self) -> String
     {
-        let label = format!(".Lbl{}", self.label);
+        let label = format!(".Lprust{}", self.label);
         self.label += 1;
         return label;
     }
@@ -44,6 +44,12 @@ pub fn compile_program<W:Write>(prgm: &Program, out: &mut W) -> Result<()>
         write!(ctx.out, "    pushq %rbp\n")?;
         write!(ctx.out, "    movq %rsp, %rbp\n")?;
         write!(ctx.out, "    subq ${}, %rsp\n", fun.body_stack_size)?;
+        if let Typ::Struct(_) = fun.body.expr.typ
+        {
+            // If the function returns a struct,
+            // store the return address in %r12 (unused callee-saved)
+            write!(ctx.out, "    movq %rbx, %r12\n")?;
+        }
         compile_block(&fun.body, &mut ctx)?;
         write!(ctx.out, "    movq %rbp, %rsp\n")?;
         write!(ctx.out, "    popq %rbp\n")?;
@@ -139,7 +145,8 @@ fn compile_instr<W:Write>(instr: &Instr, ctx: &mut Context<W>) -> Result<()>
         {
             if let Typ::Struct(_) = expr.typ
             {
-                write!(ctx.out, "    pushq %rbx\n")?;
+                // Retrieve the return address
+                write!(ctx.out, "    movq %r12, %rbx\n")?;
             }
             compile_expr(expr, ctx)?;
             // TODO: Free all blocks above
@@ -418,6 +425,7 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
 
                 compile_expr(struct_expr, ctx)?;
 
+                write!(ctx.out, "    movq %rbx, %rax\n")?;
                 write!(ctx.out, "    popq %rbx\n")?;
             }
 
