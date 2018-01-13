@@ -90,8 +90,16 @@ fn compile_instr<W:Write>(instr: &Instr, ctx: &mut Context<W>) -> Result<()>
     {
         Instr::Expression(ref expr) =>
         {
-            // TODO: Case of structs is not managed here !
+            if let Typ::Struct(struct_size) = expr.typ
+            {
+                write!(ctx.out, "    leaq -8(%rsp), %rbx\n")?;
+                write!(ctx.out, "    subq ${}, %rsp\n", struct_size)?;
+            }
             compile_expr(expr, ctx)?;
+            if let Typ::Struct(struct_size) = expr.typ
+            {
+                write!(ctx.out, "    addq ${}, %rsp\n", struct_size)?;
+            }
         }
         Instr::Let(res_off, ref init_val) =>
         {
@@ -405,14 +413,12 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
                 write!(ctx.out, "    leaq -8(%rsp), %rax\n")?;
                 write!(ctx.out, "    subq ${}, %rsp\n", struct_size)?;
 
-                if let Typ::Struct(_) = expr.typ
-                {
-                    // If we are making a struct, we must save %rbx
-                    write!(ctx.out, "    pushq %rbx\n")?;
-                }
+                write!(ctx.out, "    pushq %rbx\n")?;
                 write!(ctx.out, "    movq %rax, %rbx\n")?;
 
                 compile_expr(struct_expr, ctx)?;
+
+                write!(ctx.out, "    popq %rbx\n")?;
             }
 
 
@@ -430,10 +436,6 @@ fn compile_expr<W:Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
                 }
                 Typ::Struct(size) =>
                 {
-                    if !struct_expr.lvalue
-                    {
-                        write!(ctx.out, "    popq %rbx\n")?;
-                    }
                     // Here %rax is the position of the generated struct,
                     // %rbx is the wanted sub-struct position
                     let mut copied = 0;
