@@ -610,10 +610,8 @@ fn compile_address<W: Write>(expr: &TExpr, ctx: &mut Context<W>) -> Result<()>
             compile_expr(e, ctx)?; // A Vec is a pointer to heap memory
             write!(ctx.out, "    popq %rdi\n")?;
 
-            write!(ctx.out, "    cmpq $0, %rdi\n")?;
-            write!(ctx.out, "    jl _out_of_range_panic\n")?;
             write!(ctx.out, "    cmpq %rdx, %rdi\n")?;
-            write!(ctx.out, "    jge _out_of_range_panic\n")?;
+            write!(ctx.out, "    jae _out_of_range_panic\n")?;
 
             write!(ctx.out, "    negq %rdi\n")?;
             if data_size != 8
